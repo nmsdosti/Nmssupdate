@@ -19,26 +19,32 @@ interface MonitorResult {
   error?: string;
 }
 
-const THRESHOLD_KEY = "shein-monitor-threshold";
-
 const Index = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [result, setResult] = useState<MonitorResult | null>(null);
   const [history, setHistory] = useState<MonitorResult[]>([]);
-  const [threshold, setThreshold] = useState(() => {
-    const saved = localStorage.getItem(THRESHOLD_KEY);
-    return saved ? parseInt(saved, 10) : 1000;
-  });
-  const [thresholdInput, setThresholdInput] = useState(() => {
-    const saved = localStorage.getItem(THRESHOLD_KEY);
-    return saved || "1000";
-  });
+  const [threshold, setThreshold] = useState(1000);
+  const [thresholdInput, setThresholdInput] = useState("1000");
   const [showSettings, setShowSettings] = useState(false);
+  const [isSavingThreshold, setIsSavingThreshold] = useState(false);
   const { toast } = useToast();
 
+  // Load threshold from database on mount
   useEffect(() => {
-    localStorage.setItem(THRESHOLD_KEY, threshold.toString());
-  }, [threshold]);
+    const loadThreshold = async () => {
+      const { data, error } = await supabase
+        .from('monitor_settings')
+        .select('threshold')
+        .eq('id', 'default')
+        .single();
+      
+      if (data && !error) {
+        setThreshold(data.threshold);
+        setThresholdInput(data.threshold.toString());
+      }
+    };
+    loadThreshold();
+  }, []);
 
   const checkMonitor = async () => {
     setIsLoading(true);
@@ -77,7 +83,7 @@ const Index = () => {
     }
   };
 
-  const updateThreshold = () => {
+  const updateThreshold = async () => {
     const newThreshold = parseInt(thresholdInput.replace(/,/g, ""), 10);
     if (isNaN(newThreshold) || newThreshold < 0) {
       toast({
@@ -87,6 +93,24 @@ const Index = () => {
       });
       return;
     }
+    
+    setIsSavingThreshold(true);
+    const { error } = await supabase
+      .from('monitor_settings')
+      .update({ threshold: newThreshold })
+      .eq('id', 'default');
+    
+    setIsSavingThreshold(false);
+    
+    if (error) {
+      toast({
+        title: "Error",
+        description: "Failed to save threshold",
+        variant: "destructive",
+      });
+      return;
+    }
+    
     setThreshold(newThreshold);
     setShowSettings(false);
     toast({
@@ -162,13 +186,18 @@ const Index = () => {
                     />
                     <Button 
                       onClick={updateThreshold}
+                      disabled={isSavingThreshold}
                       className="bg-emerald-600 hover:bg-emerald-500 text-white"
                     >
-                      Save
+                      {isSavingThreshold ? (
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                      ) : (
+                        "Save"
+                      )}
                     </Button>
                   </div>
                   <p className="text-xs text-slate-500 mt-2">
-                    Note: The auto-check uses the default threshold of 1,000. Manual checks will use your custom threshold.
+                    This threshold is used for both auto-checks and manual checks.
                   </p>
                 </div>
               </div>
