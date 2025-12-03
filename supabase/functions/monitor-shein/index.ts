@@ -11,27 +11,82 @@ serve(async (req) => {
   }
 
   try {
-    const body = await req.json().catch(() => ({}));
-    const { manualCount } = body;
+    const targetUrl = 'https://www.sheinindia.in/c/sverse-5939-37961';
+    const firecrawlApiKey = Deno.env.get('FIRECRAWL_API_KEY');
     
-    let itemCount: number;
-    
-    if (typeof manualCount === 'number') {
-      // Use manual input
-      itemCount = manualCount;
-      console.log('Using manual input:', itemCount);
-    } else {
-      // Return error - automatic scraping not available
+    if (!firecrawlApiKey) {
       return new Response(JSON.stringify({ 
         success: false, 
-        error: 'Automatic scraping is blocked by SHEIN. Please use manual input or connect Firecrawl.'
+        error: 'Firecrawl API key not configured'
       }), {
         status: 400,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
 
-    console.log('Item count:', itemCount);
+    console.log('Scraping with Firecrawl:', targetUrl);
+    
+    // Use Firecrawl to scrape the page
+    const scrapeResponse = await fetch('https://api.firecrawl.dev/v1/scrape', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${firecrawlApiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        url: targetUrl,
+        formats: ['html'],
+        waitFor: 3000,
+      }),
+    });
+
+    const scrapeData = await scrapeResponse.json();
+    console.log('Firecrawl response status:', scrapeResponse.status);
+    
+    if (!scrapeResponse.ok || !scrapeData.success) {
+      console.error('Firecrawl error:', JSON.stringify(scrapeData));
+      return new Response(JSON.stringify({ 
+        success: false, 
+        error: scrapeData.error || 'Failed to scrape page'
+      }), {
+        status: 500,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    const html = scrapeData.data?.html || '';
+    console.log('HTML length:', html.length);
+
+    // Extract item count using regex
+    const patterns = [
+      /aria-label="([\d,]+)\s*Items?\s*Found"/i,
+      /<div[^>]*class="[^"]*length[^"]*"[^>]*>.*?<strong>([\d,]+)\s*Items?\s*Found<\/strong>/is,
+      /([\d,]+)\s*Items?\s*Found/i,
+    ];
+
+    let itemCount: number | null = null;
+    let rawMatch: string | null = null;
+
+    for (const pattern of patterns) {
+      const match = html.match(pattern);
+      if (match && match[1]) {
+        rawMatch = match[1];
+        itemCount = parseInt(match[1].replace(/,/g, ''), 10);
+        console.log('Found match:', rawMatch, '-> Count:', itemCount);
+        break;
+      }
+    }
+
+    if (itemCount === null) {
+      console.log('Could not find item count in HTML');
+      return new Response(JSON.stringify({ 
+        success: false, 
+        error: 'Could not extract item count from page',
+      }), {
+        status: 500,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
 
     // Check if count exceeds threshold and send Telegram notification
     let telegramSent = false;
@@ -43,11 +98,9 @@ serve(async (req) => {
       const chatId = Deno.env.get('TELEGRAM_CHAT_ID');
 
       console.log('Threshold exceeded! Sending Telegram notification...');
-      console.log('Bot token exists:', !!botToken);
-      console.log('Chat ID exists:', !!chatId);
 
       if (botToken && chatId) {
-        const message = `🚨 SHEIN Monitor Alert!\n\nItem count: ${itemCount.toLocaleString()}\nThreshold: ${threshold.toLocaleString()}\n\nThe item count has exceeded the threshold!\n\n🔗 https://www.sheinindia.in/c/sverse-5939-37961`;
+        const message = `🚨 SHEIN Monitor Alert!\n\nItem count: ${itemCount.toLocaleString()}\nThreshold: ${threshold.toLocaleString()}\n\nThe item count has exceeded the threshold!\n\n🔗 ${targetUrl}`;
 
         try {
           const telegramResponse = await fetch(
@@ -82,6 +135,7 @@ serve(async (req) => {
     return new Response(JSON.stringify({
       success: true,
       itemCount,
+      rawMatch,
       threshold,
       exceedsThreshold: itemCount > threshold,
       telegramSent,

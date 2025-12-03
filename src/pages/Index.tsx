@@ -2,9 +2,7 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Loader2, RefreshCw, Bell, BellOff, TrendingUp, Clock, ExternalLink, Send } from "lucide-react";
+import { Loader2, RefreshCw, Bell, BellOff, TrendingUp, Clock, ExternalLink } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 
@@ -23,25 +21,12 @@ const Index = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [result, setResult] = useState<MonitorResult | null>(null);
   const [history, setHistory] = useState<MonitorResult[]>([]);
-  const [manualCount, setManualCount] = useState("");
   const { toast } = useToast();
 
-  const checkWithManualInput = async () => {
-    const count = parseInt(manualCount.replace(/,/g, ""), 10);
-    if (isNaN(count)) {
-      toast({
-        title: "Invalid Input",
-        description: "Please enter a valid number",
-        variant: "destructive",
-      });
-      return;
-    }
-
+  const checkMonitor = async () => {
     setIsLoading(true);
     try {
-      const { data, error } = await supabase.functions.invoke("monitor-shein", {
-        body: { manualCount: count }
-      });
+      const { data, error } = await supabase.functions.invoke("monitor-shein");
       
       if (error) throw error;
       
@@ -51,20 +36,25 @@ const Index = () => {
       if (data.success) {
         toast({
           title: data.exceedsThreshold ? "Alert Triggered!" : "Check Complete",
-          description: `Recorded ${data.itemCount?.toLocaleString()} items`,
+          description: `Found ${data.itemCount?.toLocaleString()} items`,
           variant: data.exceedsThreshold ? "destructive" : "default",
+        });
+      } else {
+        toast({
+          title: "Error",
+          description: data.error || "Failed to check",
+          variant: "destructive",
         });
       }
     } catch (error: unknown) {
       console.error("Monitor error:", error);
       toast({
         title: "Error",
-        description: error instanceof Error ? error.message : "Failed to process",
+        description: error instanceof Error ? error.message : "Failed to check monitor",
         variant: "destructive",
       });
     } finally {
       setIsLoading(false);
-      setManualCount("");
     }
   };
 
@@ -125,7 +115,7 @@ const Index = () => {
               ) : (
                 <div className="text-slate-500">
                   <p className="text-4xl font-bold">—</p>
-                  <p className="mt-2">Enter the item count from the website</p>
+                  <p className="mt-2">Click Check Now to start monitoring</p>
                 </div>
               )}
             </div>
@@ -152,15 +142,29 @@ const Index = () => {
               </div>
             )}
 
-            {/* Manual Input Section */}
-            <div className="bg-slate-800/30 border border-slate-700/30 rounded-lg p-4">
-              <Label className="text-slate-300 text-sm mb-2 block">
-                Step 1: Open the website and find the item count
-              </Label>
+            <div className="flex gap-3 justify-center">
+              <Button 
+                onClick={checkMonitor}
+                disabled={isLoading}
+                className="bg-gradient-to-r from-emerald-600 to-cyan-600 hover:from-emerald-500 hover:to-cyan-500 text-white border-0"
+                size="lg"
+              >
+                {isLoading ? (
+                  <>
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    Checking...
+                  </>
+                ) : (
+                  <>
+                    <RefreshCw className="w-4 h-4 mr-2" />
+                    Check Now
+                  </>
+                )}
+              </Button>
               <Button
                 variant="outline"
-                size="sm"
-                className="border-slate-700 text-slate-300 hover:bg-slate-800 mb-4"
+                size="lg"
+                className="border-slate-700 text-slate-300 hover:bg-slate-800"
                 asChild
               >
                 <a 
@@ -169,33 +173,9 @@ const Index = () => {
                   rel="noopener noreferrer"
                 >
                   <ExternalLink className="w-4 h-4 mr-2" />
-                  Open SHEIN Website
+                  View Site
                 </a>
               </Button>
-              
-              <Label className="text-slate-300 text-sm mb-2 block">
-                Step 2: Enter the Items Found count below
-              </Label>
-              <div className="flex gap-2">
-                <Input
-                  type="text"
-                  value={manualCount}
-                  onChange={(e) => setManualCount(e.target.value)}
-                  placeholder="e.g. 1,333"
-                  className="bg-slate-900/50 border-slate-700 text-white placeholder:text-slate-500"
-                />
-                <Button 
-                  onClick={checkWithManualInput}
-                  disabled={isLoading || !manualCount}
-                  className="bg-gradient-to-r from-emerald-600 to-cyan-600 hover:from-emerald-500 hover:to-cyan-500 text-white border-0"
-                >
-                  {isLoading ? (
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                  ) : (
-                    <Send className="w-4 h-4" />
-                  )}
-                </Button>
-              </div>
             </div>
           </CardContent>
         </Card>
@@ -235,14 +215,11 @@ const Index = () => {
           </Card>
         )}
 
-        <Card className="bg-amber-500/10 border-amber-500/20 mt-6">
+        <Card className="bg-slate-900/30 border-slate-800/30 mt-6">
           <CardContent className="pt-6">
-            <div className="text-center text-amber-300 text-sm">
-              <p className="font-medium">Why manual input?</p>
-              <p className="mt-1 text-amber-400/80">
-                SHEIN has anti-bot protection that blocks automated scraping. 
-                You can connect Firecrawl in workspace settings for automatic monitoring.
-              </p>
+            <div className="text-center text-slate-400 text-sm">
+              <p>This monitor tracks the item count on SHEIN India sverse collection.</p>
+              <p className="mt-1">When the count exceeds 1,000 items, a Telegram notification is sent automatically.</p>
             </div>
           </CardContent>
         </Card>
