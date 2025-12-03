@@ -11,6 +11,9 @@ serve(async (req) => {
   }
 
   try {
+    const body = await req.json().catch(() => ({}));
+    const threshold = typeof body.threshold === 'number' ? body.threshold : 1000;
+    
     const targetUrl = 'https://www.sheinindia.in/c/sverse-5939-37961';
     const firecrawlApiKey = Deno.env.get('FIRECRAWL_API_KEY');
     
@@ -25,6 +28,7 @@ serve(async (req) => {
     }
 
     console.log('Scraping with Firecrawl:', targetUrl);
+    console.log('Using threshold:', threshold);
     
     // Use Firecrawl to scrape the page
     const scrapeResponse = await fetch('https://api.firecrawl.dev/v1/scrape', {
@@ -91,9 +95,9 @@ serve(async (req) => {
     // Check if count exceeds threshold and send Telegram notification
     let telegramSent = false;
     let telegramError: string | null = null;
-    const threshold = 1000;
+    const exceedsThreshold = itemCount > threshold;
 
-    if (itemCount > threshold) {
+    if (exceedsThreshold) {
       const botToken = Deno.env.get('TELEGRAM_BOT_TOKEN');
       const chatId = Deno.env.get('TELEGRAM_CHAT_ID');
 
@@ -137,7 +141,7 @@ serve(async (req) => {
       itemCount,
       rawMatch,
       threshold,
-      exceedsThreshold: itemCount > threshold,
+      exceedsThreshold,
       telegramSent,
       telegramError,
       timestamp: new Date().toISOString(),
