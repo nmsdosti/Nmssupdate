@@ -11,58 +11,27 @@ serve(async (req) => {
   }
 
   try {
-    const targetUrl = 'https://www.sheinindia.in/c/sverse-5939-37961';
+    const body = await req.json().catch(() => ({}));
+    const { manualCount } = body;
     
-    console.log('Fetching page:', targetUrl);
+    let itemCount: number;
     
-    // Fetch the page
-    const response = await fetch(targetUrl, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.5',
-      },
-    });
-
-    if (!response.ok) {
-      throw new Error(`Failed to fetch page: ${response.status}`);
-    }
-
-    const html = await response.text();
-    console.log('Page fetched, length:', html.length);
-
-    // Extract item count using regex
-    const patterns = [
-      /aria-label="([\d,]+)\s*Items?\s*Found"/i,
-      /<div[^>]*class="[^"]*length[^"]*"[^>]*>.*?<strong>([\d,]+)\s*Items?\s*Found<\/strong>/i,
-      /([\d,]+)\s*Items?\s*Found/i,
-    ];
-
-    let itemCount: number | null = null;
-    let rawMatch: string | null = null;
-
-    for (const pattern of patterns) {
-      const match = html.match(pattern);
-      if (match && match[1]) {
-        rawMatch = match[1];
-        itemCount = parseInt(match[1].replace(/,/g, ''), 10);
-        console.log('Found match with pattern:', pattern.toString(), 'Value:', rawMatch);
-        break;
-      }
-    }
-
-    if (itemCount === null) {
-      console.log('Could not find item count in HTML');
+    if (typeof manualCount === 'number') {
+      // Use manual input
+      itemCount = manualCount;
+      console.log('Using manual input:', itemCount);
+    } else {
+      // Return error - automatic scraping not available
       return new Response(JSON.stringify({ 
         success: false, 
-        error: 'Could not extract item count from page',
-        htmlPreview: html.substring(0, 1000)
+        error: 'Automatic scraping is blocked by SHEIN. Please use manual input or connect Firecrawl.'
       }), {
+        status: 400,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
 
-    console.log('Extracted item count:', itemCount);
+    console.log('Item count:', itemCount);
 
     // Check if count exceeds threshold and send Telegram notification
     let telegramSent = false;
@@ -73,8 +42,12 @@ serve(async (req) => {
       const botToken = Deno.env.get('TELEGRAM_BOT_TOKEN');
       const chatId = Deno.env.get('TELEGRAM_CHAT_ID');
 
+      console.log('Threshold exceeded! Sending Telegram notification...');
+      console.log('Bot token exists:', !!botToken);
+      console.log('Chat ID exists:', !!chatId);
+
       if (botToken && chatId) {
-        const message = `🚨 SHEIN Monitor Alert!\n\nItem count: ${itemCount.toLocaleString()}\nThreshold: ${threshold.toLocaleString()}\n\nThe item count has exceeded the threshold!\n\n🔗 ${targetUrl}`;
+        const message = `🚨 SHEIN Monitor Alert!\n\nItem count: ${itemCount.toLocaleString()}\nThreshold: ${threshold.toLocaleString()}\n\nThe item count has exceeded the threshold!\n\n🔗 https://www.sheinindia.in/c/sverse-5939-37961`;
 
         try {
           const telegramResponse = await fetch(
@@ -85,13 +58,12 @@ serve(async (req) => {
               body: JSON.stringify({
                 chat_id: chatId,
                 text: message,
-                parse_mode: 'HTML',
               }),
             }
           );
 
           const telegramResult = await telegramResponse.json();
-          console.log('Telegram response:', telegramResult);
+          console.log('Telegram response:', JSON.stringify(telegramResult));
           
           if (telegramResult.ok) {
             telegramSent = true;
@@ -110,7 +82,6 @@ serve(async (req) => {
     return new Response(JSON.stringify({
       success: true,
       itemCount,
-      rawMatch,
       threshold,
       exceedsThreshold: itemCount > threshold,
       telegramSent,
