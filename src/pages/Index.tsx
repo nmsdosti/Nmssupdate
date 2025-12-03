@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -19,14 +19,26 @@ interface MonitorResult {
   error?: string;
 }
 
+const THRESHOLD_KEY = "shein-monitor-threshold";
+
 const Index = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [result, setResult] = useState<MonitorResult | null>(null);
   const [history, setHistory] = useState<MonitorResult[]>([]);
-  const [threshold, setThreshold] = useState(1000);
-  const [thresholdInput, setThresholdInput] = useState("1000");
+  const [threshold, setThreshold] = useState(() => {
+    const saved = localStorage.getItem(THRESHOLD_KEY);
+    return saved ? parseInt(saved, 10) : 1000;
+  });
+  const [thresholdInput, setThresholdInput] = useState(() => {
+    const saved = localStorage.getItem(THRESHOLD_KEY);
+    return saved || "1000";
+  });
   const [showSettings, setShowSettings] = useState(false);
   const { toast } = useToast();
+
+  useEffect(() => {
+    localStorage.setItem(THRESHOLD_KEY, threshold.toString());
+  }, [threshold]);
 
   const checkMonitor = async () => {
     setIsLoading(true);
