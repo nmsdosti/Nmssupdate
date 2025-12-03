@@ -1,1 +1,4 @@
 project_id = "tavwgjeshzofasvhxidz"
+
+[functions.monitor-shein]
+verify_jwt = false
