@@ -1,4 +1,5 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -12,7 +13,24 @@ serve(async (req) => {
 
   try {
     const body = await req.json().catch(() => ({}));
-    const threshold = typeof body.threshold === 'number' ? body.threshold : 1000;
+    
+    // Get threshold from database if not provided in request
+    let threshold = typeof body.threshold === 'number' ? body.threshold : null;
+    
+    if (threshold === null) {
+      const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
+      const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+      const supabase = createClient(supabaseUrl, supabaseKey);
+      
+      const { data: settings } = await supabase
+        .from('monitor_settings')
+        .select('threshold')
+        .eq('id', 'default')
+        .single();
+      
+      threshold = settings?.threshold ?? 1000;
+      console.log('Loaded threshold from database:', threshold);
+    }
     
     const targetUrl = 'https://www.sheinindia.in/c/sverse-5939-37961';
     const firecrawlApiKey = Deno.env.get('FIRECRAWL_API_KEY');
