@@ -4,7 +4,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Loader2, RefreshCw, Bell, BellOff, TrendingUp, Clock, ExternalLink, Settings } from "lucide-react";
+import { Loader2, RefreshCw, Bell, BellOff, TrendingUp, Clock, ExternalLink, Settings, Timer } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 
@@ -96,19 +96,35 @@ const Index = () => {
               <p className="text-xs text-slate-400">Real-time inventory tracking</p>
             </div>
           </div>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => setShowSettings(!showSettings)}
-            className="text-slate-400 hover:text-white hover:bg-slate-800"
-          >
-            <Settings className="w-4 h-4 mr-2" />
-            Threshold: {threshold.toLocaleString()}
-          </Button>
+          <div className="flex items-center gap-2">
+            <Badge variant="outline" className="border-cyan-500/30 text-cyan-400 bg-cyan-500/10">
+              <Timer className="w-3 h-3 mr-1" />
+              Auto: 5 min
+            </Badge>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setShowSettings(!showSettings)}
+              className="text-slate-400 hover:text-white hover:bg-slate-800"
+            >
+              <Settings className="w-4 h-4 mr-2" />
+              {threshold.toLocaleString()}
+            </Button>
+          </div>
         </div>
       </header>
 
       <main className="container mx-auto px-4 py-8 max-w-4xl">
+        {/* Auto-check Info */}
+        <Card className="bg-cyan-500/10 border-cyan-500/20 mb-6">
+          <CardContent className="py-3">
+            <div className="flex items-center justify-center gap-2 text-cyan-400 text-sm">
+              <Timer className="w-4 h-4" />
+              <span>Auto-checking every 5 minutes. Telegram alerts sent when items exceed {threshold.toLocaleString()}.</span>
+            </div>
+          </CardContent>
+        </Card>
+
         {/* Settings Panel */}
         {showSettings && (
           <Card className="bg-slate-900/50 border-slate-800/50 backdrop-blur-sm mb-6">
@@ -139,6 +155,9 @@ const Index = () => {
                       Save
                     </Button>
                   </div>
+                  <p className="text-xs text-slate-500 mt-2">
+                    Note: The auto-check uses the default threshold of 1,000. Manual checks will use your custom threshold.
+                  </p>
                 </div>
               </div>
             </CardContent>
@@ -182,7 +201,7 @@ const Index = () => {
               ) : (
                 <div className="text-slate-500">
                   <p className="text-4xl font-bold">—</p>
-                  <p className="mt-2">Click Check Now to start monitoring</p>
+                  <p className="mt-2">Click Check Now or wait for auto-check</p>
                 </div>
               )}
             </div>
@@ -285,8 +304,8 @@ const Index = () => {
         <Card className="bg-slate-900/30 border-slate-800/30 mt-6">
           <CardContent className="pt-6">
             <div className="text-center text-slate-400 text-sm">
-              <p>This monitor tracks the item count on SHEIN India sverse collection.</p>
-              <p className="mt-1">When the count exceeds {threshold.toLocaleString()} items, a Telegram notification is sent.</p>
+              <p>This monitor automatically checks SHEIN India sverse collection every 5 minutes.</p>
+              <p className="mt-1">A Telegram notification is sent when the item count exceeds the threshold.</p>
             </div>
           </CardContent>
         </Card>
