@@ -2,7 +2,9 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Loader2, RefreshCw, Bell, BellOff, TrendingUp, Clock, ExternalLink } from "lucide-react";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Loader2, RefreshCw, Bell, BellOff, TrendingUp, Clock, ExternalLink, Settings } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 
@@ -21,12 +23,17 @@ const Index = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [result, setResult] = useState<MonitorResult | null>(null);
   const [history, setHistory] = useState<MonitorResult[]>([]);
+  const [threshold, setThreshold] = useState(1000);
+  const [thresholdInput, setThresholdInput] = useState("1000");
+  const [showSettings, setShowSettings] = useState(false);
   const { toast } = useToast();
 
   const checkMonitor = async () => {
     setIsLoading(true);
     try {
-      const { data, error } = await supabase.functions.invoke("monitor-shein");
+      const { data, error } = await supabase.functions.invoke("monitor-shein", {
+        body: { threshold }
+      });
       
       if (error) throw error;
       
@@ -58,6 +65,24 @@ const Index = () => {
     }
   };
 
+  const updateThreshold = () => {
+    const newThreshold = parseInt(thresholdInput.replace(/,/g, ""), 10);
+    if (isNaN(newThreshold) || newThreshold < 0) {
+      toast({
+        title: "Invalid Threshold",
+        description: "Please enter a valid positive number",
+        variant: "destructive",
+      });
+      return;
+    }
+    setThreshold(newThreshold);
+    setShowSettings(false);
+    toast({
+      title: "Threshold Updated",
+      description: `Alert will trigger when items exceed ${newThreshold.toLocaleString()}`,
+    });
+  };
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950">
       <header className="border-b border-slate-800/50 backdrop-blur-sm bg-slate-950/50 sticky top-0 z-10">
@@ -71,13 +96,55 @@ const Index = () => {
               <p className="text-xs text-slate-400">Real-time inventory tracking</p>
             </div>
           </div>
-          <Badge variant="outline" className="border-emerald-500/30 text-emerald-400 bg-emerald-500/10">
-            Threshold: 1,000
-          </Badge>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setShowSettings(!showSettings)}
+            className="text-slate-400 hover:text-white hover:bg-slate-800"
+          >
+            <Settings className="w-4 h-4 mr-2" />
+            Threshold: {threshold.toLocaleString()}
+          </Button>
         </div>
       </header>
 
       <main className="container mx-auto px-4 py-8 max-w-4xl">
+        {/* Settings Panel */}
+        {showSettings && (
+          <Card className="bg-slate-900/50 border-slate-800/50 backdrop-blur-sm mb-6">
+            <CardHeader>
+              <CardTitle className="text-white text-lg flex items-center gap-2">
+                <Settings className="w-5 h-5" />
+                Settings
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-4">
+                <div>
+                  <Label className="text-slate-300 text-sm mb-2 block">
+                    Alert Threshold (send Telegram when items exceed this)
+                  </Label>
+                  <div className="flex gap-2">
+                    <Input
+                      type="text"
+                      value={thresholdInput}
+                      onChange={(e) => setThresholdInput(e.target.value)}
+                      placeholder="e.g. 1000"
+                      className="bg-slate-900/50 border-slate-700 text-white placeholder:text-slate-500 max-w-xs"
+                    />
+                    <Button 
+                      onClick={updateThreshold}
+                      className="bg-emerald-600 hover:bg-emerald-500 text-white"
+                    >
+                      Save
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
         <Card className="bg-slate-900/50 border-slate-800/50 backdrop-blur-sm mb-6 overflow-hidden relative">
           <div className="absolute inset-0 bg-gradient-to-br from-emerald-500/5 to-cyan-500/5 pointer-events-none" />
           <CardHeader className="relative">
@@ -219,7 +286,7 @@ const Index = () => {
           <CardContent className="pt-6">
             <div className="text-center text-slate-400 text-sm">
               <p>This monitor tracks the item count on SHEIN India sverse collection.</p>
-              <p className="mt-1">When the count exceeds 1,000 items, a Telegram notification is sent automatically.</p>
+              <p className="mt-1">When the count exceeds {threshold.toLocaleString()} items, a Telegram notification is sent.</p>
             </div>
           </CardContent>
         </Card>
