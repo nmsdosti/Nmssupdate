@@ -11,6 +11,10 @@ serve(async (req) => {
     return new Response(null, { headers: corsHeaders });
   }
 
+  const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
+  const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+  const supabase = createClient(supabaseUrl, supabaseKey);
+
   try {
     const body = await req.json().catch(() => ({}));
     
@@ -18,10 +22,6 @@ serve(async (req) => {
     let threshold = typeof body.threshold === 'number' ? body.threshold : null;
     
     if (threshold === null) {
-      const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
-      const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-      const supabase = createClient(supabaseUrl, supabaseKey);
-      
       const { data: settings } = await supabase
         .from('monitor_settings')
         .select('threshold')
@@ -152,6 +152,21 @@ serve(async (req) => {
       } else {
         telegramError = 'Telegram credentials not configured';
       }
+    }
+
+    // Log to history table
+    const { error: historyError } = await supabase
+      .from('monitor_history')
+      .insert({
+        item_count: itemCount,
+        threshold: threshold,
+        exceeds_threshold: exceedsThreshold,
+        telegram_sent: telegramSent,
+        telegram_error: telegramError,
+      });
+
+    if (historyError) {
+      console.error('Failed to log history:', historyError);
     }
 
     return new Response(JSON.stringify({

@@ -19,31 +19,66 @@ interface MonitorResult {
   error?: string;
 }
 
+interface HistoryItem {
+  id: string;
+  item_count: number;
+  threshold: number;
+  exceeds_threshold: boolean;
+  telegram_sent: boolean;
+  telegram_error: string | null;
+  created_at: string;
+}
+
 const Index = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [result, setResult] = useState<MonitorResult | null>(null);
-  const [history, setHistory] = useState<MonitorResult[]>([]);
+  const [history, setHistory] = useState<HistoryItem[]>([]);
   const [threshold, setThreshold] = useState(1000);
   const [thresholdInput, setThresholdInput] = useState("1000");
   const [showSettings, setShowSettings] = useState(false);
   const [isSavingThreshold, setIsSavingThreshold] = useState(false);
   const { toast } = useToast();
 
-  // Load threshold from database on mount
+  // Load threshold and history from database on mount
   useEffect(() => {
-    const loadThreshold = async () => {
-      const { data, error } = await supabase
+    const loadData = async () => {
+      // Load threshold
+      const { data: settings } = await supabase
         .from('monitor_settings')
         .select('threshold')
         .eq('id', 'default')
         .single();
       
-      if (data && !error) {
-        setThreshold(data.threshold);
-        setThresholdInput(data.threshold.toString());
+      if (settings) {
+        setThreshold(settings.threshold);
+        setThresholdInput(settings.threshold.toString());
+      }
+
+      // Load history
+      const { data: historyData } = await supabase
+        .from('monitor_history')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(20);
+      
+      if (historyData) {
+        setHistory(historyData);
+        // Set latest result if available
+        if (historyData.length > 0) {
+          const latest = historyData[0];
+          setResult({
+            success: true,
+            itemCount: latest.item_count,
+            threshold: latest.threshold,
+            exceedsThreshold: latest.exceeds_threshold,
+            telegramSent: latest.telegram_sent,
+            telegramError: latest.telegram_error,
+            timestamp: latest.created_at,
+          });
+        }
       }
     };
-    loadThreshold();
+    loadData();
   }, []);
 
   const checkMonitor = async () => {
@@ -56,7 +91,17 @@ const Index = () => {
       if (error) throw error;
       
       setResult(data);
-      setHistory(prev => [data, ...prev].slice(0, 10));
+      
+      // Reload history from database
+      const { data: historyData } = await supabase
+        .from('monitor_history')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(20);
+      
+      if (historyData) {
+        setHistory(historyData);
+      }
       
       if (data.success) {
         toast({
@@ -235,7 +280,7 @@ const Index = () => {
                   {result.timestamp && (
                     <p className="text-xs text-slate-500 mt-1 flex items-center justify-center gap-1">
                       <Clock className="w-3 h-3" />
-                      Last checked: {new Date(result.timestamp).toLocaleTimeString()}
+                      Last checked: {new Date(result.timestamp).toLocaleString()}
                     </p>
                   )}
                 </>
@@ -310,29 +355,35 @@ const Index = () => {
         {history.length > 0 && (
           <Card className="bg-slate-900/50 border-slate-800/50 backdrop-blur-sm">
             <CardHeader>
-              <CardTitle className="text-white text-lg">Recent Checks</CardTitle>
+              <CardTitle className="text-white text-lg">Check History</CardTitle>
+              <CardDescription className="text-slate-400">
+                All monitoring checks (auto & manual)
+              </CardDescription>
             </CardHeader>
             <CardContent>
               <div className="space-y-2">
-                {history.map((item, index) => (
+                {history.map((item) => (
                   <div 
-                    key={index}
+                    key={item.id}
                     className="flex items-center justify-between p-3 rounded-lg bg-slate-800/30 border border-slate-700/30"
                   >
                     <div className="flex items-center gap-3">
                       <div className={`w-2 h-2 rounded-full ${
-                        item.exceedsThreshold ? "bg-red-400" : "bg-emerald-400"
+                        item.exceeds_threshold ? "bg-red-400" : "bg-emerald-400"
                       }`} />
                       <span className="text-white font-medium">
-                        {item.itemCount?.toLocaleString() ?? "—"} items
+                        {item.item_count.toLocaleString()} items
+                      </span>
+                      <span className="text-slate-500 text-xs">
+                        (threshold: {item.threshold.toLocaleString()})
                       </span>
                     </div>
                     <div className="flex items-center gap-3">
-                      {item.telegramSent && (
+                      {item.telegram_sent && (
                         <Bell className="w-4 h-4 text-emerald-400" />
                       )}
                       <span className="text-xs text-slate-500">
-                        {item.timestamp && new Date(item.timestamp).toLocaleTimeString()}
+                        {new Date(item.created_at).toLocaleString()}
                       </span>
                     </div>
                   </div>
