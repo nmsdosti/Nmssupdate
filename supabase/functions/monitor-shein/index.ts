@@ -48,7 +48,7 @@ serve(async (req) => {
     console.log('Scraping with Firecrawl:', targetUrl);
     console.log('Using threshold:', threshold);
     
-    // Use Firecrawl to scrape the page
+    // Use Firecrawl to scrape the page with cache busting
     const scrapeResponse = await fetch('https://api.firecrawl.dev/v1/scrape', {
       method: 'POST',
       headers: {
@@ -56,9 +56,10 @@ serve(async (req) => {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        url: targetUrl,
+        url: `${targetUrl}?_=${Date.now()}`,
         formats: ['html'],
-        waitFor: 3000,
+        waitFor: 5000,
+        skipCache: true,
       }),
     });
 
