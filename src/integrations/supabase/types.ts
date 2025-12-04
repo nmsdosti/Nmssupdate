@@ -14,6 +14,36 @@ export type Database = {
   }
   public: {
     Tables: {
+      monitor_history: {
+        Row: {
+          created_at: string
+          exceeds_threshold: boolean
+          id: string
+          item_count: number
+          telegram_error: string | null
+          telegram_sent: boolean
+          threshold: number
+        }
+        Insert: {
+          created_at?: string
+          exceeds_threshold?: boolean
+          id?: string
+          item_count: number
+          telegram_error?: string | null
+          telegram_sent?: boolean
+          threshold: number
+        }
+        Update: {
+          created_at?: string
+          exceeds_threshold?: boolean
+          id?: string
+          item_count?: number
+          telegram_error?: string | null
+          telegram_sent?: boolean
+          threshold?: number
+        }
+        Relationships: []
+      }
       monitor_settings: {
         Row: {
           created_at: string
