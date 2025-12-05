@@ -117,40 +117,63 @@ serve(async (req) => {
 
     if (exceedsThreshold) {
       const botToken = Deno.env.get('TELEGRAM_BOT_TOKEN');
-      const chatId = Deno.env.get('TELEGRAM_CHAT_ID');
 
-      console.log('Threshold exceeded! Sending Telegram notification...');
+      console.log('Threshold exceeded! Sending Telegram notifications to all subscribers...');
 
-      if (botToken && chatId) {
-        const message = `🚨 SHEIN Monitor Alert!\n\nItem count: ${itemCount.toLocaleString()}\nThreshold: ${threshold.toLocaleString()}\n\nThe item count has exceeded the threshold!\n\n🔗 ${targetUrl}`;
+      if (botToken) {
+        // Get all active subscribers
+        const { data: subscribers, error: subError } = await supabase
+          .from('telegram_subscribers')
+          .select('chat_id, first_name')
+          .eq('is_active', true);
 
-        try {
-          const telegramResponse = await fetch(
-            `https://api.telegram.org/bot${botToken}/sendMessage`,
-            {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                chat_id: chatId,
-                text: message,
-              }),
+        if (subError) {
+          console.error('Error fetching subscribers:', subError);
+          telegramError = 'Failed to fetch subscribers';
+        } else if (!subscribers || subscribers.length === 0) {
+          console.log('No active subscribers found');
+          telegramError = 'No active subscribers';
+        } else {
+          console.log(`Sending to ${subscribers.length} subscribers`);
+          const message = `🚨 SHEIN Monitor Alert!\n\nItem count: ${itemCount.toLocaleString()}\nThreshold: ${threshold.toLocaleString()}\n\nThe item count has exceeded the threshold!\n\n🔗 ${targetUrl}`;
+
+          let successCount = 0;
+          const errors: string[] = [];
+
+          for (const sub of subscribers) {
+            try {
+              const telegramResponse = await fetch(
+                `https://api.telegram.org/bot${botToken}/sendMessage`,
+                {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    chat_id: sub.chat_id,
+                    text: message,
+                  }),
+                }
+              );
+
+              const telegramResult = await telegramResponse.json();
+              if (telegramResult.ok) {
+                successCount++;
+                console.log(`Sent to ${sub.chat_id} (${sub.first_name || 'unknown'})`);
+              } else {
+                errors.push(`${sub.chat_id}: ${telegramResult.description}`);
+              }
+            } catch (e: unknown) {
+              errors.push(`${sub.chat_id}: ${e instanceof Error ? e.message : 'Unknown error'}`);
             }
-          );
-
-          const telegramResult = await telegramResponse.json();
-          console.log('Telegram response:', JSON.stringify(telegramResult));
-          
-          if (telegramResult.ok) {
-            telegramSent = true;
-          } else {
-            telegramError = telegramResult.description || 'Failed to send';
           }
-        } catch (e: unknown) {
-          console.error('Telegram error:', e);
-          telegramError = e instanceof Error ? e.message : 'Unknown error';
+
+          telegramSent = successCount > 0;
+          if (errors.length > 0) {
+            telegramError = `Sent to ${successCount}/${subscribers.length}. Errors: ${errors.join('; ')}`;
+          }
+          console.log(`Notifications sent: ${successCount}/${subscribers.length}`);
         }
       } else {
-        telegramError = 'Telegram credentials not configured';
+        telegramError = 'Telegram bot token not configured';
       }
     }
 
