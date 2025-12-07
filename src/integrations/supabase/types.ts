@@ -47,18 +47,21 @@ export type Database = {
       monitor_settings: {
         Row: {
           created_at: string
+          firecrawl_api_key: string | null
           id: string
           threshold: number
           updated_at: string
         }
         Insert: {
           created_at?: string
+          firecrawl_api_key?: string | null
           id?: string
           threshold?: number
           updated_at?: string
         }
         Update: {
           created_at?: string
+          firecrawl_api_key?: string | null
           id?: string
           threshold?: number
           updated_at?: string

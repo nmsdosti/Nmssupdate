@@ -18,27 +18,26 @@ serve(async (req) => {
   try {
     const body = await req.json().catch(() => ({}));
     
-    // Get threshold from database if not provided in request
-    let threshold = typeof body.threshold === 'number' ? body.threshold : null;
+    // Get settings from database
+    const { data: settings } = await supabase
+      .from('monitor_settings')
+      .select('threshold, firecrawl_api_key')
+      .eq('id', 'default')
+      .single();
     
-    if (threshold === null) {
-      const { data: settings } = await supabase
-        .from('monitor_settings')
-        .select('threshold')
-        .eq('id', 'default')
-        .single();
-      
-      threshold = settings?.threshold ?? 1000;
-      console.log('Loaded threshold from database:', threshold);
-    }
+    // Get threshold from request or database
+    const threshold = typeof body.threshold === 'number' ? body.threshold : (settings?.threshold ?? 1000);
+    console.log('Loaded threshold from database:', threshold);
     
     const targetUrl = 'https://www.sheinindia.in/c/sverse-5939-37961';
-    const firecrawlApiKey = Deno.env.get('FIRECRAWL_API_KEY');
+    
+    // Try database API key first, then fall back to environment variable
+    const firecrawlApiKey = settings?.firecrawl_api_key || Deno.env.get('FIRECRAWL_API_KEY');
     
     if (!firecrawlApiKey) {
       return new Response(JSON.stringify({ 
         success: false, 
-        error: 'Firecrawl API key not configured'
+        error: 'Firecrawl API key not configured. Please add it in Settings.'
       }), {
         status: 400,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
