@@ -35,23 +35,31 @@ const Index = () => {
   const [history, setHistory] = useState<HistoryItem[]>([]);
   const [threshold, setThreshold] = useState(1000);
   const [thresholdInput, setThresholdInput] = useState("1000");
+  const [firecrawlKey, setFirecrawlKey] = useState("");
+  const [firecrawlKeyInput, setFirecrawlKeyInput] = useState("");
   const [showSettings, setShowSettings] = useState(false);
   const [isSavingThreshold, setIsSavingThreshold] = useState(false);
+  const [isSavingApiKey, setIsSavingApiKey] = useState(false);
   const { toast } = useToast();
 
   // Load threshold and history from database on mount
   useEffect(() => {
     const loadData = async () => {
-      // Load threshold
+      // Load threshold and API key
       const { data: settings } = await supabase
         .from('monitor_settings')
-        .select('threshold')
+        .select('threshold, firecrawl_api_key')
         .eq('id', 'default')
         .single();
       
       if (settings) {
         setThreshold(settings.threshold);
         setThresholdInput(settings.threshold.toString());
+        if (settings.firecrawl_api_key) {
+          setFirecrawlKey(settings.firecrawl_api_key);
+          // Show masked version
+          setFirecrawlKeyInput("••••••••" + settings.firecrawl_api_key.slice(-4));
+        }
       }
 
       // Load history
@@ -164,6 +172,42 @@ const Index = () => {
     });
   };
 
+  const updateApiKey = async () => {
+    const newKey = firecrawlKeyInput.trim();
+    if (!newKey || newKey.startsWith("••••")) {
+      toast({
+        title: "Invalid API Key",
+        description: "Please enter a valid Firecrawl API key",
+        variant: "destructive",
+      });
+      return;
+    }
+    
+    setIsSavingApiKey(true);
+    const { error } = await supabase
+      .from('monitor_settings')
+      .update({ firecrawl_api_key: newKey })
+      .eq('id', 'default');
+    
+    setIsSavingApiKey(false);
+    
+    if (error) {
+      toast({
+        title: "Error",
+        description: "Failed to save API key",
+        variant: "destructive",
+      });
+      return;
+    }
+    
+    setFirecrawlKey(newKey);
+    setFirecrawlKeyInput("••••••••" + newKey.slice(-4));
+    toast({
+      title: "API Key Updated",
+      description: "Firecrawl API key has been saved",
+    });
+  };
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950">
       <header className="border-b border-slate-800/50 backdrop-blur-sm bg-slate-950/50 sticky top-0 z-10">
@@ -216,7 +260,7 @@ const Index = () => {
               </CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="space-y-4">
+              <div className="space-y-6">
                 <div>
                   <Label className="text-slate-300 text-sm mb-2 block">
                     Alert Threshold (send Telegram when items exceed this)
@@ -243,6 +287,40 @@ const Index = () => {
                   </div>
                   <p className="text-xs text-slate-500 mt-2">
                     This threshold is used for both auto-checks and manual checks.
+                  </p>
+                </div>
+
+                <div className="border-t border-slate-700/50 pt-4">
+                  <Label className="text-slate-300 text-sm mb-2 block">
+                    Firecrawl API Key
+                  </Label>
+                  <div className="flex gap-2">
+                    <Input
+                      type="text"
+                      value={firecrawlKeyInput}
+                      onChange={(e) => setFirecrawlKeyInput(e.target.value)}
+                      onFocus={() => {
+                        if (firecrawlKeyInput.startsWith("••••")) {
+                          setFirecrawlKeyInput("");
+                        }
+                      }}
+                      placeholder="Enter your Firecrawl API key"
+                      className="bg-slate-900/50 border-slate-700 text-white placeholder:text-slate-500 flex-1"
+                    />
+                    <Button 
+                      onClick={updateApiKey}
+                      disabled={isSavingApiKey}
+                      className="bg-emerald-600 hover:bg-emerald-500 text-white"
+                    >
+                      {isSavingApiKey ? (
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                      ) : (
+                        "Save"
+                      )}
+                    </Button>
+                  </div>
+                  <p className="text-xs text-slate-500 mt-2">
+                    Get your API key from <a href="https://firecrawl.dev" target="_blank" rel="noopener noreferrer" className="text-cyan-400 hover:underline">firecrawl.dev</a>
                   </p>
                 </div>
               </div>
