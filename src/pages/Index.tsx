@@ -35,6 +35,8 @@ const Index = () => {
   const [history, setHistory] = useState<HistoryItem[]>([]);
   const [threshold, setThreshold] = useState(1000);
   const [thresholdInput, setThresholdInput] = useState("1000");
+  const [jumpThreshold, setJumpThreshold] = useState(100);
+  const [jumpThresholdInput, setJumpThresholdInput] = useState("100");
   const [firecrawlKey, setFirecrawlKey] = useState("");
   const [firecrawlKeyInput, setFirecrawlKeyInput] = useState("");
   const [showSettings, setShowSettings] = useState(false);
@@ -48,13 +50,15 @@ const Index = () => {
       // Load threshold and API key
       const { data: settings } = await supabase
         .from('monitor_settings')
-        .select('threshold, firecrawl_api_key')
+        .select('threshold, jump_threshold, firecrawl_api_key')
         .eq('id', 'default')
         .single();
       
       if (settings) {
         setThreshold(settings.threshold);
         setThresholdInput(settings.threshold.toString());
+        setJumpThreshold(settings.jump_threshold);
+        setJumpThresholdInput(settings.jump_threshold.toString());
         if (settings.firecrawl_api_key) {
           setFirecrawlKey(settings.firecrawl_api_key);
           // Show masked version
@@ -245,7 +249,7 @@ const Index = () => {
           <CardContent className="py-3">
             <div className="flex items-center justify-center gap-2 text-cyan-400 text-sm">
               <Timer className="w-4 h-4" />
-              <span>Auto-checking every 5 minutes. Telegram alerts sent when items exceed {threshold.toLocaleString()}.</span>
+              <span>Auto-checking every 5 minutes. Alerts when items exceed {threshold.toLocaleString()} or jump by {jumpThreshold.toLocaleString()}+.</span>
             </div>
           </CardContent>
         </Card>
@@ -287,6 +291,59 @@ const Index = () => {
                   </div>
                   <p className="text-xs text-slate-500 mt-2">
                     This threshold is used for both auto-checks and manual checks.
+                  </p>
+                </div>
+
+                <div>
+                  <Label className="text-slate-300 text-sm mb-2 block">
+                    Jump Alert (send Telegram when items suddenly increase by this amount)
+                  </Label>
+                  <div className="flex gap-2">
+                    <Input
+                      type="text"
+                      value={jumpThresholdInput}
+                      onChange={(e) => setJumpThresholdInput(e.target.value)}
+                      placeholder="e.g. 100"
+                      className="bg-slate-900/50 border-slate-700 text-white placeholder:text-slate-500 max-w-xs"
+                    />
+                    <Button 
+                      onClick={async () => {
+                        const newJump = parseInt(jumpThresholdInput.replace(/,/g, ""), 10);
+                        if (isNaN(newJump) || newJump < 0) {
+                          toast({
+                            title: "Invalid Jump Threshold",
+                            description: "Please enter a valid positive number",
+                            variant: "destructive",
+                          });
+                          return;
+                        }
+                        const { error } = await supabase
+                          .from('monitor_settings')
+                          .update({ jump_threshold: newJump })
+                          .eq('id', 'default');
+                        
+                        if (error) {
+                          toast({
+                            title: "Error",
+                            description: "Failed to save jump threshold",
+                            variant: "destructive",
+                          });
+                          return;
+                        }
+                        
+                        setJumpThreshold(newJump);
+                        toast({
+                          title: "Jump Threshold Updated",
+                          description: `Alert will trigger on sudden jump of ${newJump.toLocaleString()} items`,
+                        });
+                      }}
+                      className="bg-emerald-600 hover:bg-emerald-500 text-white"
+                    >
+                      Save
+                    </Button>
+                  </div>
+                  <p className="text-xs text-slate-500 mt-2">
+                    Notifies when item count increases by this amount from the last check.
                   </p>
                 </div>
 

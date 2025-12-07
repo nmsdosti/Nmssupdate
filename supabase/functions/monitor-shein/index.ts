@@ -21,13 +21,15 @@ serve(async (req) => {
     // Get settings from database
     const { data: settings } = await supabase
       .from('monitor_settings')
-      .select('threshold, firecrawl_api_key')
+      .select('threshold, jump_threshold, firecrawl_api_key')
       .eq('id', 'default')
       .single();
     
     // Get threshold from request or database
     const threshold = typeof body.threshold === 'number' ? body.threshold : (settings?.threshold ?? 1000);
+    const jumpThreshold = settings?.jump_threshold ?? 100;
     console.log('Loaded threshold from database:', threshold);
+    console.log('Jump threshold:', jumpThreshold);
     
     const targetUrl = 'https://www.sheinindia.in/c/sverse-5939-37961';
     
@@ -109,12 +111,26 @@ serve(async (req) => {
       });
     }
 
-    // Check if count exceeds threshold and send Telegram notification
+    // Get last item count from history for jump detection
+    const { data: lastHistory } = await supabase
+      .from('monitor_history')
+      .select('item_count')
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .single();
+    
+    const lastItemCount = lastHistory?.item_count ?? null;
+    const jumpDetected = lastItemCount !== null && (itemCount - lastItemCount) >= jumpThreshold;
+    
+    console.log('Last item count:', lastItemCount, 'Current:', itemCount, 'Jump detected:', jumpDetected);
+
+    // Check if count exceeds threshold or jump detected
     let telegramSent = false;
     let telegramError: string | null = null;
     const exceedsThreshold = itemCount > threshold;
+    const shouldNotify = exceedsThreshold || jumpDetected;
 
-    if (exceedsThreshold) {
+    if (shouldNotify) {
       const botToken = Deno.env.get('TELEGRAM_BOT_TOKEN');
 
       console.log('Threshold exceeded! Sending Telegram notifications to all subscribers...');
@@ -134,7 +150,17 @@ serve(async (req) => {
           telegramError = 'No active subscribers';
         } else {
           console.log(`Sending to ${subscribers.length} subscribers`);
-          const message = `🚨 SHEIN Monitor Alert!\n\nItem count: ${itemCount.toLocaleString()}\nThreshold: ${threshold.toLocaleString()}\n\nThe item count has exceeded the threshold!\n\n🔗 ${targetUrl}`;
+          
+          let alertReason = '';
+          if (exceedsThreshold && jumpDetected) {
+            alertReason = `Item count exceeded threshold AND jumped by ${(itemCount - lastItemCount!).toLocaleString()}!`;
+          } else if (exceedsThreshold) {
+            alertReason = 'Item count has exceeded the threshold!';
+          } else if (jumpDetected) {
+            alertReason = `Sudden jump detected: +${(itemCount - lastItemCount!).toLocaleString()} items from last check!`;
+          }
+          
+          const message = `🚨 SHEIN Monitor Alert!\n\nItem count: ${itemCount.toLocaleString()}\nThreshold: ${threshold.toLocaleString()}\n${lastItemCount !== null ? `Previous: ${lastItemCount.toLocaleString()}\n` : ''}\n${alertReason}\n\n🔗 ${targetUrl}`;
 
           let successCount = 0;
           const errors: string[] = [];
