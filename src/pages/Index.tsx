@@ -4,7 +4,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Loader2, RefreshCw, Bell, BellOff, TrendingUp, Clock, ExternalLink, Settings, Timer, Plus, Trash2, Layers } from "lucide-react";
+import { Loader2, RefreshCw, Bell, BellOff, TrendingUp, Clock, ExternalLink, Settings, Timer, Plus, Trash2, Layers, Minus } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 
@@ -36,6 +36,7 @@ interface CategoryMonitor {
   threshold: number;
   is_active: boolean;
   last_item_count: number | null;
+  subtract_from_total: boolean;
 }
 
 interface FirecrawlApiKey {
@@ -630,9 +631,16 @@ const Index = () => {
                               <div className="flex-1 min-w-0">
                                 <div className="flex items-center gap-2">
                                   <span className="text-white font-medium truncate">{cat.name}</span>
-                                  <Badge variant="outline" className="text-xs border-slate-600 text-slate-400">
-                                    ≥{cat.threshold}
-                                  </Badge>
+                                  {cat.subtract_from_total ? (
+                                    <Badge variant="outline" className="text-xs border-amber-500/50 text-amber-400">
+                                      <Minus className="w-3 h-3 mr-1" />
+                                      Subtract
+                                    </Badge>
+                                  ) : (
+                                    <Badge variant="outline" className="text-xs border-slate-600 text-slate-400">
+                                      ≥{cat.threshold}
+                                    </Badge>
+                                  )}
                                 </div>
                                 <p className="text-xs text-slate-500 truncate">{cat.url}</p>
                                 {cat.last_item_count !== null && (
@@ -640,18 +648,37 @@ const Index = () => {
                                 )}
                               </div>
                               <div className="flex items-center gap-2 ml-2">
-                                <Input
-                                  type="number"
-                                  value={cat.threshold}
-                                  min="1"
-                                  className="bg-slate-900/50 border-slate-700 text-white w-16 h-8 text-xs"
-                                  onChange={async (e) => {
-                                    const newTh = parseInt(e.target.value, 10);
-                                    if (isNaN(newTh) || newTh < 1) return;
-                                    await supabase.from('category_monitors').update({ threshold: newTh }).eq('id', cat.id);
-                                    setCategories(prev => prev.map(c => c.id === cat.id ? { ...c, threshold: newTh } : c));
+                                {!cat.subtract_from_total && (
+                                  <Input
+                                    type="number"
+                                    value={cat.threshold}
+                                    min="1"
+                                    className="bg-slate-900/50 border-slate-700 text-white w-16 h-8 text-xs"
+                                    onChange={async (e) => {
+                                      const newTh = parseInt(e.target.value, 10);
+                                      if (isNaN(newTh) || newTh < 1) return;
+                                      await supabase.from('category_monitors').update({ threshold: newTh }).eq('id', cat.id);
+                                      setCategories(prev => prev.map(c => c.id === cat.id ? { ...c, threshold: newTh } : c));
+                                    }}
+                                  />
+                                )}
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  className={`h-8 px-2 text-xs ${cat.subtract_from_total ? 'text-amber-400 hover:text-amber-300' : 'text-slate-400 hover:text-slate-300'}`}
+                                  onClick={async () => {
+                                    await supabase.from('category_monitors').update({ subtract_from_total: !cat.subtract_from_total }).eq('id', cat.id);
+                                    setCategories(prev => prev.map(c => c.id === cat.id ? { ...c, subtract_from_total: !c.subtract_from_total } : c));
+                                    toast({
+                                      title: cat.subtract_from_total ? "Monitor Mode" : "Subtract Mode",
+                                      description: cat.subtract_from_total 
+                                        ? `${cat.name} will now trigger alerts` 
+                                        : `${cat.name} will be subtracted from total`
+                                    });
                                   }}
-                                />
+                                >
+                                  {cat.subtract_from_total ? 'Monitor' : 'Subtract'}
+                                </Button>
                                 <Button
                                   variant="ghost"
                                   size="sm"

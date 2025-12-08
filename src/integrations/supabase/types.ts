@@ -21,6 +21,7 @@ export type Database = {
           is_active: boolean
           last_item_count: number | null
           name: string
+          subtract_from_total: boolean
           threshold: number
           updated_at: string
           url: string
@@ -31,6 +32,7 @@ export type Database = {
           is_active?: boolean
           last_item_count?: number | null
           name: string
+          subtract_from_total?: boolean
           threshold?: number
           updated_at?: string
           url: string
@@ -41,6 +43,7 @@ export type Database = {
           is_active?: boolean
           last_item_count?: number | null
           name?: string
+          subtract_from_total?: boolean
           threshold?: number
           updated_at?: string
           url?: string
