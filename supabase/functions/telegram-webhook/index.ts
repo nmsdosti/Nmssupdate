@@ -105,6 +105,21 @@ serve(async (req) => {
           text: statusMessage,
         }),
       });
+    } else if (text && !text.startsWith('/')) {
+      // Store regular messages from users
+      const { error } = await supabase
+        .from('telegram_messages')
+        .insert({
+          chat_id: chatId,
+          username: username,
+          first_name: firstName,
+          message_text: text,
+        });
+
+      if (error) {
+        console.error('Error saving message:', error);
+      }
+      console.log(`Message stored from ${chatId}: ${text}`);
     }
 
     return new Response(JSON.stringify({ ok: true }), {
