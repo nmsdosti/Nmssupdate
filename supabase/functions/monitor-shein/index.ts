@@ -6,6 +6,58 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
+interface CategoryMonitor {
+  id: string;
+  name: string;
+  url: string;
+  threshold: number;
+  is_active: boolean;
+  last_item_count: number | null;
+}
+
+async function scrapeItemCount(url: string, firecrawlApiKey: string): Promise<{ success: boolean; itemCount?: number; error?: string }> {
+  try {
+    const scrapeResponse = await fetch('https://api.firecrawl.dev/v1/scrape', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${firecrawlApiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        url: `${url}${url.includes('?') ? '&' : '?'}_nocache=${Date.now()}`,
+        formats: ['html'],
+        waitFor: 5000,
+      }),
+    });
+
+    const scrapeData = await scrapeResponse.json();
+    
+    if (!scrapeResponse.ok || !scrapeData.success) {
+      return { success: false, error: scrapeData.error || 'Scrape failed' };
+    }
+
+    const html = scrapeData.data?.html || '';
+    
+    const patterns = [
+      /aria-label="([\d,]+)\s*Items?\s*Found"/i,
+      /<div[^>]*class="[^"]*length[^"]*"[^>]*>.*?<strong>([\d,]+)\s*Items?\s*Found<\/strong>/is,
+      /([\d,]+)\s*Items?\s*Found/i,
+    ];
+
+    for (const pattern of patterns) {
+      const match = html.match(pattern);
+      if (match && match[1]) {
+        const itemCount = parseInt(match[1].replace(/,/g, ''), 10);
+        return { success: true, itemCount };
+      }
+    }
+
+    return { success: false, error: 'Could not extract item count' };
+  } catch (error) {
+    return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
+  }
+}
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
@@ -25,15 +77,12 @@ serve(async (req) => {
       .eq('id', 'default')
       .single();
     
-    // Get threshold from request or database
     const threshold = typeof body.threshold === 'number' ? body.threshold : (settings?.threshold ?? 1000);
     const jumpThreshold = settings?.jump_threshold ?? 100;
     console.log('Loaded threshold from database:', threshold);
     console.log('Jump threshold:', jumpThreshold);
     
     const targetUrl = 'https://www.sheinindia.in/c/sverse-5939-37961';
-    
-    // Try database API key first, then fall back to environment variable
     const firecrawlApiKey = settings?.firecrawl_api_key || Deno.env.get('FIRECRAWL_API_KEY');
     
     if (!firecrawlApiKey) {
@@ -48,38 +97,24 @@ serve(async (req) => {
 
     console.log('Scraping with Firecrawl:', targetUrl);
     console.log('Using threshold:', threshold);
-    
-    // Use Firecrawl to scrape the page with cache busting via timestamp
-    const scrapeResponse = await fetch('https://api.firecrawl.dev/v1/scrape', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${firecrawlApiKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        url: `${targetUrl}?_nocache=${Date.now()}`,
-        formats: ['html'],
-        waitFor: 5000,
-      }),
-    });
 
-    const scrapeData = await scrapeResponse.json();
-    console.log('Firecrawl response status:', scrapeResponse.status);
+    // Scrape main URL
+    const mainResult = await scrapeItemCount(targetUrl, firecrawlApiKey);
     
-    if (!scrapeResponse.ok || !scrapeData.success) {
-      console.error('Firecrawl error:', JSON.stringify(scrapeData));
+    if (!mainResult.success) {
+      console.error('Main scrape failed:', mainResult.error);
       
-      // Check if this is an API key/quota error and notify subscribers
-      const errorMessage = scrapeData.error || '';
-      const isApiKeyError = scrapeResponse.status === 401 || 
-                           scrapeResponse.status === 402 || 
-                           scrapeResponse.status === 403 ||
-                           errorMessage.toLowerCase().includes('quota') ||
+      // Check for API key errors
+      const errorMessage = mainResult.error || '';
+      const isApiKeyError = errorMessage.toLowerCase().includes('quota') ||
                            errorMessage.toLowerCase().includes('credit') ||
                            errorMessage.toLowerCase().includes('limit') ||
                            errorMessage.toLowerCase().includes('unauthorized') ||
                            errorMessage.toLowerCase().includes('invalid') ||
-                           errorMessage.toLowerCase().includes('expired');
+                           errorMessage.toLowerCase().includes('expired') ||
+                           errorMessage.toLowerCase().includes('401') ||
+                           errorMessage.toLowerCase().includes('402') ||
+                           errorMessage.toLowerCase().includes('403');
       
       if (isApiKeyError) {
         const botToken = Deno.env.get('TELEGRAM_BOT_TOKEN');
@@ -90,7 +125,7 @@ serve(async (req) => {
             .eq('is_active', true);
           
           if (subscribers && subscribers.length > 0) {
-            const alertMessage = `⚠️ Firecrawl API Error!\n\nYour Firecrawl API key may have run out of credits or is invalid.\n\nError: ${errorMessage || 'Authentication/quota issue'}\n\nPlease update your API key in the Settings.`;
+            const alertMessage = `⚠️ Firecrawl API Error!\n\nYour Firecrawl API key may have run out of credits or is invalid.\n\nError: ${errorMessage}\n\nPlease update your API key in the Settings.`;
             
             for (const sub of subscribers) {
               try {
@@ -99,7 +134,6 @@ serve(async (req) => {
                   headers: { 'Content-Type': 'application/json' },
                   body: JSON.stringify({ chat_id: sub.chat_id, text: alertMessage }),
                 });
-                console.log(`Firecrawl error notification sent to ${sub.chat_id}`);
               } catch (e) {
                 console.error(`Failed to notify ${sub.chat_id}:`, e);
               }
@@ -110,46 +144,15 @@ serve(async (req) => {
       
       return new Response(JSON.stringify({ 
         success: false, 
-        error: scrapeData.error || 'Failed to scrape page'
+        error: mainResult.error
       }), {
         status: 500,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
 
-    const html = scrapeData.data?.html || '';
-    console.log('HTML length:', html.length);
-
-    // Extract item count using regex
-    const patterns = [
-      /aria-label="([\d,]+)\s*Items?\s*Found"/i,
-      /<div[^>]*class="[^"]*length[^"]*"[^>]*>.*?<strong>([\d,]+)\s*Items?\s*Found<\/strong>/is,
-      /([\d,]+)\s*Items?\s*Found/i,
-    ];
-
-    let itemCount: number | null = null;
-    let rawMatch: string | null = null;
-
-    for (const pattern of patterns) {
-      const match = html.match(pattern);
-      if (match && match[1]) {
-        rawMatch = match[1];
-        itemCount = parseInt(match[1].replace(/,/g, ''), 10);
-        console.log('Found match:', rawMatch, '-> Count:', itemCount);
-        break;
-      }
-    }
-
-    if (itemCount === null) {
-      console.log('Could not find item count in HTML');
-      return new Response(JSON.stringify({ 
-        success: false, 
-        error: 'Could not extract item count from page',
-      }), {
-        status: 500,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
-    }
+    const itemCount = mainResult.itemCount!;
+    console.log('Found main count:', itemCount);
 
     // Get last item count from history for jump detection
     const { data: lastHistory } = await supabase
@@ -157,26 +160,64 @@ serve(async (req) => {
       .select('item_count')
       .order('created_at', { ascending: false })
       .limit(1)
-      .single();
+      .maybeSingle();
     
     const lastItemCount = lastHistory?.item_count ?? null;
     const jumpDetected = lastItemCount !== null && (itemCount - lastItemCount) >= jumpThreshold;
     
     console.log('Last item count:', lastItemCount, 'Current:', itemCount, 'Jump detected:', jumpDetected);
 
-    // Check if count exceeds threshold or jump detected
+    // Check category monitors
+    const { data: categoryMonitors } = await supabase
+      .from('category_monitors')
+      .select('*')
+      .eq('is_active', true);
+    
+    const categoryAlerts: { name: string; count: number; threshold: number }[] = [];
+    
+    if (categoryMonitors && categoryMonitors.length > 0) {
+      console.log(`Checking ${categoryMonitors.length} category monitors...`);
+      
+      for (const cat of categoryMonitors as CategoryMonitor[]) {
+        console.log(`Checking category: ${cat.name} (${cat.url})`);
+        const catResult = await scrapeItemCount(cat.url, firecrawlApiKey);
+        
+        if (catResult.success && catResult.itemCount !== undefined) {
+          console.log(`Category ${cat.name}: ${catResult.itemCount} items (threshold: ${cat.threshold})`);
+          
+          // Update last_item_count
+          await supabase
+            .from('category_monitors')
+            .update({ last_item_count: catResult.itemCount })
+            .eq('id', cat.id);
+          
+          // Check if exceeds threshold
+          if (catResult.itemCount >= cat.threshold) {
+            categoryAlerts.push({
+              name: cat.name,
+              count: catResult.itemCount,
+              threshold: cat.threshold,
+            });
+          }
+        } else {
+          console.log(`Failed to scrape category ${cat.name}:`, catResult.error);
+        }
+      }
+    }
+
+    // Determine if we should send notifications
     let telegramSent = false;
     let telegramError: string | null = null;
     const exceedsThreshold = itemCount > threshold;
-    const shouldNotify = exceedsThreshold || jumpDetected;
+    const hasCategoryAlerts = categoryAlerts.length > 0;
+    const shouldNotify = exceedsThreshold || jumpDetected || hasCategoryAlerts;
 
     if (shouldNotify) {
       const botToken = Deno.env.get('TELEGRAM_BOT_TOKEN');
 
-      console.log('Threshold exceeded! Sending Telegram notifications to all subscribers...');
+      console.log('Sending Telegram notifications...');
 
       if (botToken) {
-        // Get all active subscribers
         const { data: subscribers, error: subError } = await supabase
           .from('telegram_subscribers')
           .select('chat_id, first_name')
@@ -191,16 +232,37 @@ serve(async (req) => {
         } else {
           console.log(`Sending to ${subscribers.length} subscribers`);
           
-          let alertReason = '';
-          if (exceedsThreshold && jumpDetected) {
-            alertReason = `Item count exceeded threshold AND jumped by ${(itemCount - lastItemCount!).toLocaleString()}!`;
-          } else if (exceedsThreshold) {
-            alertReason = 'Item count has exceeded the threshold!';
-          } else if (jumpDetected) {
-            alertReason = `Sudden jump detected: +${(itemCount - lastItemCount!).toLocaleString()} items from last check!`;
+          // Build message
+          let messageParts: string[] = ['🚨 SHEIN Monitor Alert!\n'];
+          
+          // Main threshold alerts
+          if (exceedsThreshold || jumpDetected) {
+            messageParts.push(`📦 Total Stock: ${itemCount.toLocaleString()} items`);
+            messageParts.push(`Threshold: ${threshold.toLocaleString()}`);
+            if (lastItemCount !== null) {
+              messageParts.push(`Previous: ${lastItemCount.toLocaleString()}`);
+            }
+            
+            if (exceedsThreshold && jumpDetected) {
+              messageParts.push(`\n⚠️ Exceeded threshold AND jumped by +${(itemCount - lastItemCount!).toLocaleString()}!`);
+            } else if (exceedsThreshold) {
+              messageParts.push(`\n⚠️ Item count exceeded threshold!`);
+            } else if (jumpDetected) {
+              messageParts.push(`\n⚠️ Sudden jump: +${(itemCount - lastItemCount!).toLocaleString()} items!`);
+            }
           }
           
-          const message = `🚨 SHEIN Monitor Alert!\n\nItem count: ${itemCount.toLocaleString()}\nThreshold: ${threshold.toLocaleString()}\n${lastItemCount !== null ? `Previous: ${lastItemCount.toLocaleString()}\n` : ''}\n${alertReason}\n\n🔗 ${targetUrl}`;
+          // Category alerts
+          if (hasCategoryAlerts) {
+            messageParts.push('\n\n📁 Category Alerts:');
+            for (const alert of categoryAlerts) {
+              messageParts.push(`• ${alert.name}: ${alert.count} items (limit: ${alert.threshold})`);
+            }
+          }
+          
+          messageParts.push(`\n\n🔗 ${targetUrl}`);
+          
+          const message = messageParts.join('\n');
 
           let successCount = 0;
           const errors: string[] = [];
@@ -248,7 +310,7 @@ serve(async (req) => {
       .insert({
         item_count: itemCount,
         threshold: threshold,
-        exceeds_threshold: exceedsThreshold,
+        exceeds_threshold: exceedsThreshold || hasCategoryAlerts,
         telegram_sent: telegramSent,
         telegram_error: telegramError,
       });
@@ -260,9 +322,9 @@ serve(async (req) => {
     return new Response(JSON.stringify({
       success: true,
       itemCount,
-      rawMatch,
       threshold,
       exceedsThreshold,
+      categoryAlerts,
       telegramSent,
       telegramError,
       timestamp: new Date().toISOString(),
