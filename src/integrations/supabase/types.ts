@@ -47,6 +47,39 @@ export type Database = {
         }
         Relationships: []
       }
+      firecrawl_api_keys: {
+        Row: {
+          api_key: string
+          created_at: string
+          id: string
+          is_active: boolean
+          label: string | null
+          last_error: string | null
+          last_used_at: string | null
+          updated_at: string
+        }
+        Insert: {
+          api_key: string
+          created_at?: string
+          id?: string
+          is_active?: boolean
+          label?: string | null
+          last_error?: string | null
+          last_used_at?: string | null
+          updated_at?: string
+        }
+        Update: {
+          api_key?: string
+          created_at?: string
+          id?: string
+          is_active?: boolean
+          label?: string | null
+          last_error?: string | null
+          last_used_at?: string | null
+          updated_at?: string
+        }
+        Relationships: []
+      }
       monitor_history: {
         Row: {
           created_at: string
