@@ -13,6 +13,7 @@ interface CategoryMonitor {
   threshold: number;
   is_active: boolean;
   last_item_count: number | null;
+  subtract_from_total: boolean;
 }
 
 interface ApiKey {
@@ -200,8 +201,8 @@ serve(async (req) => {
       });
     }
 
-    const itemCount = mainResult.itemCount!;
-    console.log('Found main count:', itemCount);
+    const rawItemCount = mainResult.itemCount!;
+    console.log('Found main count:', rawItemCount);
 
     // Get last item count from history for jump detection
     const { data: lastHistory } = await supabase
@@ -212,9 +213,6 @@ serve(async (req) => {
       .maybeSingle();
     
     const lastItemCount = lastHistory?.item_count ?? null;
-    const jumpDetected = lastItemCount !== null && (itemCount - lastItemCount) >= jumpThreshold;
-    
-    console.log('Last item count:', lastItemCount, 'Current:', itemCount, 'Jump detected:', jumpDetected);
 
     // Check category monitors
     const { data: categoryMonitors } = await supabase
@@ -223,6 +221,8 @@ serve(async (req) => {
       .eq('is_active', true);
     
     const categoryAlerts: { name: string; count: number; threshold: number }[] = [];
+    const subtractedCategories: { name: string; count: number }[] = [];
+    let totalSubtraction = 0;
     
     if (categoryMonitors && categoryMonitors.length > 0) {
       console.log(`Checking ${categoryMonitors.length} category monitors...`);
@@ -266,8 +266,15 @@ serve(async (req) => {
             .update({ last_item_count: catResult.itemCount })
             .eq('id', cat.id);
           
-          // Check if exceeds threshold
-          if (catResult.itemCount >= cat.threshold) {
+          // If marked for subtraction, add to total subtraction
+          if (cat.subtract_from_total) {
+            totalSubtraction += catResult.itemCount;
+            subtractedCategories.push({ name: cat.name, count: catResult.itemCount });
+            console.log(`Subtracting ${cat.name}: ${catResult.itemCount} from total`);
+          }
+          
+          // Check if exceeds threshold (only for non-subtracted categories)
+          if (!cat.subtract_from_total && catResult.itemCount >= cat.threshold) {
             categoryAlerts.push({
               name: cat.name,
               count: catResult.itemCount,
@@ -279,6 +286,13 @@ serve(async (req) => {
         }
       }
     }
+    
+    // Calculate adjusted item count
+    const itemCount = Math.max(0, rawItemCount - totalSubtraction);
+    console.log(`Raw count: ${rawItemCount}, Subtraction: ${totalSubtraction}, Adjusted count: ${itemCount}`);
+    
+    const jumpDetected = lastItemCount !== null && (itemCount - lastItemCount) >= jumpThreshold;
+    console.log('Last item count:', lastItemCount, 'Current:', itemCount, 'Jump detected:', jumpDetected);
 
     // Determine if we should send notifications
     let telegramSent = false;
@@ -312,7 +326,12 @@ serve(async (req) => {
           
           // Main threshold alerts
           if (exceedsThreshold || jumpDetected) {
-            messageParts.push(`📦 Total Stock: ${itemCount.toLocaleString()} items`);
+            if (totalSubtraction > 0) {
+              messageParts.push(`📦 Adjusted Stock: ${itemCount.toLocaleString()} items`);
+              messageParts.push(`(Raw: ${rawItemCount.toLocaleString()} - ${totalSubtraction.toLocaleString()} excluded)`);
+            } else {
+              messageParts.push(`📦 Total Stock: ${itemCount.toLocaleString()} items`);
+            }
             messageParts.push(`Threshold: ${threshold.toLocaleString()}`);
             if (lastItemCount !== null) {
               messageParts.push(`Previous: ${lastItemCount.toLocaleString()}`);
