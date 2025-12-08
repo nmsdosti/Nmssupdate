@@ -15,7 +15,15 @@ interface CategoryMonitor {
   last_item_count: number | null;
 }
 
-async function scrapeItemCount(url: string, firecrawlApiKey: string): Promise<{ success: boolean; itemCount?: number; error?: string }> {
+interface ApiKey {
+  id: string;
+  api_key: string;
+  label: string | null;
+  is_active: boolean;
+  last_error: string | null;
+}
+
+async function scrapeItemCount(url: string, firecrawlApiKey: string): Promise<{ success: boolean; itemCount?: number; error?: string; isApiKeyError?: boolean }> {
   try {
     const scrapeResponse = await fetch('https://api.firecrawl.dev/v1/scrape', {
       method: 'POST',
@@ -33,7 +41,17 @@ async function scrapeItemCount(url: string, firecrawlApiKey: string): Promise<{ 
     const scrapeData = await scrapeResponse.json();
     
     if (!scrapeResponse.ok || !scrapeData.success) {
-      return { success: false, error: scrapeData.error || 'Scrape failed' };
+      const errorMessage = scrapeData.error || `HTTP ${scrapeResponse.status}`;
+      const isApiKeyError = errorMessage.toLowerCase().includes('quota') ||
+                           errorMessage.toLowerCase().includes('credit') ||
+                           errorMessage.toLowerCase().includes('limit') ||
+                           errorMessage.toLowerCase().includes('unauthorized') ||
+                           errorMessage.toLowerCase().includes('invalid') ||
+                           errorMessage.toLowerCase().includes('expired') ||
+                           scrapeResponse.status === 401 ||
+                           scrapeResponse.status === 402 ||
+                           scrapeResponse.status === 403;
+      return { success: false, error: errorMessage, isApiKeyError };
     }
 
     const html = scrapeData.data?.html || '';
@@ -73,7 +91,7 @@ serve(async (req) => {
     // Get settings from database
     const { data: settings } = await supabase
       .from('monitor_settings')
-      .select('threshold, jump_threshold, firecrawl_api_key')
+      .select('threshold, jump_threshold')
       .eq('id', 'default')
       .single();
     
@@ -82,41 +100,72 @@ serve(async (req) => {
     console.log('Loaded threshold from database:', threshold);
     console.log('Jump threshold:', jumpThreshold);
     
-    const targetUrl = 'https://www.sheinindia.in/c/sverse-5939-37961';
-    const firecrawlApiKey = settings?.firecrawl_api_key || Deno.env.get('FIRECRAWL_API_KEY');
+    // Get all active API keys ordered by created_at
+    const { data: apiKeys } = await supabase
+      .from('firecrawl_api_keys')
+      .select('id, api_key, label, is_active, last_error')
+      .eq('is_active', true)
+      .order('created_at', { ascending: true });
     
-    if (!firecrawlApiKey) {
+    if (!apiKeys || apiKeys.length === 0) {
       return new Response(JSON.stringify({ 
         success: false, 
-        error: 'Firecrawl API key not configured. Please add it in Settings.'
+        error: 'No Firecrawl API keys configured. Please add at least one in Settings.'
       }), {
         status: 400,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
+    
+    console.log(`Found ${apiKeys.length} active API keys`);
+    
+    const targetUrl = 'https://www.sheinindia.in/c/sverse-5939-37961';
 
     console.log('Scraping with Firecrawl:', targetUrl);
     console.log('Using threshold:', threshold);
 
-    // Scrape main URL
-    const mainResult = await scrapeItemCount(targetUrl, firecrawlApiKey);
+    // Try to scrape main URL with API key rotation
+    let mainResult: { success: boolean; itemCount?: number; error?: string; usedKeyId?: string; allKeysFailed?: boolean } = {
+      success: false,
+      error: 'No API keys available',
+      allKeysFailed: true,
+    };
+    
+    for (const key of apiKeys as ApiKey[]) {
+      console.log(`Trying API key: ${key.label || key.id.slice(0, 8)}...`);
+      
+      const result = await scrapeItemCount(targetUrl, key.api_key);
+      
+      // Update last_used_at
+      await supabase
+        .from('firecrawl_api_keys')
+        .update({ 
+          last_used_at: new Date().toISOString(), 
+          last_error: result.success ? null : (result.error || null)
+        })
+        .eq('id', key.id);
+      
+      if (result.success) {
+        mainResult = { success: true, itemCount: result.itemCount, usedKeyId: key.id, allKeysFailed: false };
+        break;
+      }
+      
+      // If it's an API key error, mark and try next key
+      if (result.isApiKeyError) {
+        console.log(`API key ${key.label || key.id.slice(0, 8)} failed: ${result.error}`);
+        continue;
+      }
+      
+      // For non-API key errors, return the error
+      mainResult = { success: false, error: result.error, usedKeyId: key.id, allKeysFailed: false };
+      break;
+    }
     
     if (!mainResult.success) {
       console.error('Main scrape failed:', mainResult.error);
       
-      // Check for API key errors
-      const errorMessage = mainResult.error || '';
-      const isApiKeyError = errorMessage.toLowerCase().includes('quota') ||
-                           errorMessage.toLowerCase().includes('credit') ||
-                           errorMessage.toLowerCase().includes('limit') ||
-                           errorMessage.toLowerCase().includes('unauthorized') ||
-                           errorMessage.toLowerCase().includes('invalid') ||
-                           errorMessage.toLowerCase().includes('expired') ||
-                           errorMessage.toLowerCase().includes('401') ||
-                           errorMessage.toLowerCase().includes('402') ||
-                           errorMessage.toLowerCase().includes('403');
-      
-      if (isApiKeyError) {
+      // If all keys failed, send notification
+      if (mainResult.allKeysFailed) {
         const botToken = Deno.env.get('TELEGRAM_BOT_TOKEN');
         if (botToken) {
           const { data: subscribers } = await supabase
@@ -125,7 +174,7 @@ serve(async (req) => {
             .eq('is_active', true);
           
           if (subscribers && subscribers.length > 0) {
-            const alertMessage = `⚠️ Firecrawl API Error!\n\nYour Firecrawl API key may have run out of credits or is invalid.\n\nError: ${errorMessage}\n\nPlease update your API key in the Settings.`;
+            const alertMessage = `⚠️ All Firecrawl API Keys Exhausted!\n\nAll ${apiKeys.length} configured API keys have failed or run out of credits.\n\nPlease add new API keys or replenish existing ones in Settings.`;
             
             for (const sub of subscribers) {
               try {
@@ -180,7 +229,33 @@ serve(async (req) => {
       
       for (const cat of categoryMonitors as CategoryMonitor[]) {
         console.log(`Checking category: ${cat.name} (${cat.url})`);
-        const catResult = await scrapeItemCount(cat.url, firecrawlApiKey);
+        
+        // Try each API key for this category
+        let catResult: { success: boolean; itemCount?: number; error?: string } = { success: false, error: 'No keys' };
+        
+        for (const key of apiKeys as ApiKey[]) {
+          const result = await scrapeItemCount(cat.url, key.api_key);
+          
+          await supabase
+            .from('firecrawl_api_keys')
+            .update({ 
+              last_used_at: new Date().toISOString(), 
+              last_error: result.success ? null : (result.error || null)
+            })
+            .eq('id', key.id);
+          
+          if (result.success) {
+            catResult = result;
+            break;
+          }
+          
+          if (result.isApiKeyError) {
+            continue;
+          }
+          
+          catResult = result;
+          break;
+        }
         
         if (catResult.success && catResult.itemCount !== undefined) {
           console.log(`Category ${cat.name}: ${catResult.itemCount} items (threshold: ${cat.threshold})`);

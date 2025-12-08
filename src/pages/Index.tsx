@@ -38,6 +38,15 @@ interface CategoryMonitor {
   last_item_count: number | null;
 }
 
+interface FirecrawlApiKey {
+  id: string;
+  api_key: string;
+  label: string | null;
+  is_active: boolean;
+  last_error: string | null;
+  last_used_at: string | null;
+}
+
 const Index = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [result, setResult] = useState<MonitorResult | null>(null);
@@ -46,11 +55,15 @@ const Index = () => {
   const [thresholdInput, setThresholdInput] = useState("1000");
   const [jumpThreshold, setJumpThreshold] = useState(100);
   const [jumpThresholdInput, setJumpThresholdInput] = useState("100");
-  const [firecrawlKey, setFirecrawlKey] = useState("");
-  const [firecrawlKeyInput, setFirecrawlKeyInput] = useState("");
   const [showSettings, setShowSettings] = useState(false);
   const [isSavingThreshold, setIsSavingThreshold] = useState(false);
-  const [isSavingApiKey, setIsSavingApiKey] = useState(false);
+  
+  // API Keys state
+  const [apiKeys, setApiKeys] = useState<FirecrawlApiKey[]>([]);
+  const [newApiKey, setNewApiKey] = useState("");
+  const [newApiKeyLabel, setNewApiKeyLabel] = useState("");
+  const [isAddingApiKey, setIsAddingApiKey] = useState(false);
+  const [showApiKeys, setShowApiKeys] = useState(false);
   
   // Category monitors state
   const [categories, setCategories] = useState<CategoryMonitor[]>([]);
@@ -65,10 +78,10 @@ const Index = () => {
   // Load threshold and history from database on mount
   useEffect(() => {
     const loadData = async () => {
-      // Load threshold and API key
+      // Load threshold
       const { data: settings } = await supabase
         .from('monitor_settings')
-        .select('threshold, jump_threshold, firecrawl_api_key')
+        .select('threshold, jump_threshold')
         .eq('id', 'default')
         .single();
       
@@ -77,11 +90,16 @@ const Index = () => {
         setThresholdInput(settings.threshold.toString());
         setJumpThreshold(settings.jump_threshold);
         setJumpThresholdInput(settings.jump_threshold.toString());
-        if (settings.firecrawl_api_key) {
-          setFirecrawlKey(settings.firecrawl_api_key);
-          // Show masked version
-          setFirecrawlKeyInput("••••••••" + settings.firecrawl_api_key.slice(-4));
-        }
+      }
+
+      // Load API keys
+      const { data: keysData } = await supabase
+        .from('firecrawl_api_keys')
+        .select('*')
+        .order('created_at', { ascending: true });
+      
+      if (keysData) {
+        setApiKeys(keysData);
       }
 
       // Load history
@@ -204,9 +222,9 @@ const Index = () => {
     });
   };
 
-  const updateApiKey = async () => {
-    const newKey = firecrawlKeyInput.trim();
-    if (!newKey || newKey.startsWith("••••")) {
+  const addApiKey = async () => {
+    const key = newApiKey.trim();
+    if (!key) {
       toast({
         title: "Invalid API Key",
         description: "Please enter a valid Firecrawl API key",
@@ -215,28 +233,49 @@ const Index = () => {
       return;
     }
     
-    setIsSavingApiKey(true);
-    const { error } = await supabase
-      .from('monitor_settings')
-      .update({ firecrawl_api_key: newKey })
-      .eq('id', 'default');
-    
-    setIsSavingApiKey(false);
-    
-    if (error) {
+    if (apiKeys.length >= 20) {
       toast({
-        title: "Error",
-        description: "Failed to save API key",
+        title: "Limit Reached",
+        description: "Maximum 20 API keys allowed",
         variant: "destructive",
       });
       return;
     }
     
-    setFirecrawlKey(newKey);
-    setFirecrawlKeyInput("••••••••" + newKey.slice(-4));
+    setIsAddingApiKey(true);
+    const { error } = await supabase
+      .from('firecrawl_api_keys')
+      .insert({
+        api_key: key,
+        label: newApiKeyLabel.trim() || null,
+      });
+    
+    setIsAddingApiKey(false);
+    
+    if (error) {
+      toast({
+        title: "Error",
+        description: "Failed to add API key",
+        variant: "destructive",
+      });
+      return;
+    }
+    
+    // Reload API keys
+    const { data } = await supabase
+      .from('firecrawl_api_keys')
+      .select('*')
+      .order('created_at', { ascending: true });
+    
+    if (data) {
+      setApiKeys(data);
+    }
+    
+    setNewApiKey("");
+    setNewApiKeyLabel("");
     toast({
-      title: "API Key Updated",
-      description: "Firecrawl API key has been saved",
+      title: "API Key Added",
+      description: "New Firecrawl API key has been saved",
     });
   };
 
@@ -375,38 +414,117 @@ const Index = () => {
                   </p>
                 </div>
 
+                {/* Firecrawl API Keys Section */}
                 <div className="border-t border-slate-700/50 pt-4">
-                  <Label className="text-slate-300 text-sm mb-2 block">
-                    Firecrawl API Key
-                  </Label>
-                  <div className="flex gap-2">
-                    <Input
-                      type="text"
-                      value={firecrawlKeyInput}
-                      onChange={(e) => setFirecrawlKeyInput(e.target.value)}
-                      onFocus={() => {
-                        if (firecrawlKeyInput.startsWith("••••")) {
-                          setFirecrawlKeyInput("");
-                        }
-                      }}
-                      placeholder="Enter your Firecrawl API key"
-                      className="bg-slate-900/50 border-slate-700 text-white placeholder:text-slate-500 flex-1"
-                    />
-                    <Button 
-                      onClick={updateApiKey}
-                      disabled={isSavingApiKey}
-                      className="bg-emerald-600 hover:bg-emerald-500 text-white"
+                  <div className="flex items-center justify-between mb-4">
+                    <Label className="text-slate-300 text-sm flex items-center gap-2">
+                      Firecrawl API Keys
+                      <Badge variant="outline" className="text-xs border-slate-600 text-slate-400">
+                        {apiKeys.filter(k => k.is_active).length}/{apiKeys.length}
+                      </Badge>
+                    </Label>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setShowApiKeys(!showApiKeys)}
+                      className="border-slate-700 text-slate-300 hover:bg-slate-800"
                     >
-                      {isSavingApiKey ? (
-                        <Loader2 className="w-4 h-4 animate-spin" />
-                      ) : (
-                        "Save"
-                      )}
+                      {showApiKeys ? "Hide" : "Manage"}
                     </Button>
                   </div>
-                  <p className="text-xs text-slate-500 mt-2">
-                    Get your API key from <a href="https://firecrawl.dev" target="_blank" rel="noopener noreferrer" className="text-cyan-400 hover:underline">firecrawl.dev</a>
-                  </p>
+                  
+                  {showApiKeys && (
+                    <div className="space-y-4">
+                      {/* Add new API key */}
+                      <div className="bg-slate-800/30 p-3 rounded-lg border border-slate-700/30">
+                        <p className="text-xs text-slate-400 mb-3">Add API key (max 20). Keys are used in order, rotating on failure.</p>
+                        <div className="space-y-2">
+                          <Input
+                            type="text"
+                            value={newApiKeyLabel}
+                            onChange={(e) => setNewApiKeyLabel(e.target.value)}
+                            placeholder="Label (optional, e.g. 'Primary')"
+                            className="bg-slate-900/50 border-slate-700 text-white placeholder:text-slate-500"
+                          />
+                          <div className="flex gap-2">
+                            <Input
+                              type="text"
+                              value={newApiKey}
+                              onChange={(e) => setNewApiKey(e.target.value)}
+                              placeholder="fc-xxxxx..."
+                              className="bg-slate-900/50 border-slate-700 text-white placeholder:text-slate-500 flex-1"
+                            />
+                            <Button
+                              onClick={addApiKey}
+                              disabled={isAddingApiKey || apiKeys.length >= 20}
+                              className="bg-emerald-600 hover:bg-emerald-500 text-white"
+                            >
+                              {isAddingApiKey ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
+                            </Button>
+                          </div>
+                        </div>
+                        <p className="text-xs text-slate-500 mt-2">
+                          Get your API key from <a href="https://firecrawl.dev" target="_blank" rel="noopener noreferrer" className="text-cyan-400 hover:underline">firecrawl.dev</a>
+                        </p>
+                      </div>
+
+                      {/* Existing API keys */}
+                      {apiKeys.length > 0 ? (
+                        <div className="space-y-2">
+                          {apiKeys.map((key, index) => (
+                            <div key={key.id} className="flex items-center justify-between p-3 bg-slate-800/20 rounded-lg border border-slate-700/20">
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-2">
+                                  <span className="text-white font-medium truncate">
+                                    {key.label || `Key ${index + 1}`}
+                                  </span>
+                                  <Badge 
+                                    variant="outline" 
+                                    className={`text-xs ${key.is_active ? 'border-emerald-500/50 text-emerald-400' : 'border-red-500/50 text-red-400'}`}
+                                  >
+                                    {key.is_active ? 'Active' : 'Inactive'}
+                                  </Badge>
+                                </div>
+                                <p className="text-xs text-slate-500 truncate">
+                                  ••••••••{key.api_key.slice(-8)}
+                                </p>
+                                {key.last_error && (
+                                  <p className="text-xs text-red-400 truncate">Error: {key.last_error}</p>
+                                )}
+                              </div>
+                              <div className="flex items-center gap-2 ml-2">
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  className={`h-8 px-2 ${key.is_active ? 'text-amber-400 hover:text-amber-300' : 'text-emerald-400 hover:text-emerald-300'}`}
+                                  onClick={async () => {
+                                    await supabase.from('firecrawl_api_keys').update({ is_active: !key.is_active }).eq('id', key.id);
+                                    setApiKeys(prev => prev.map(k => k.id === key.id ? { ...k, is_active: !k.is_active } : k));
+                                  }}
+                                >
+                                  {key.is_active ? 'Disable' : 'Enable'}
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  className="text-red-400 hover:text-red-300 hover:bg-red-500/10 h-8 w-8 p-0"
+                                  onClick={async () => {
+                                    await supabase.from('firecrawl_api_keys').delete().eq('id', key.id);
+                                    setApiKeys(prev => prev.filter(k => k.id !== key.id));
+                                    toast({ title: "Deleted", description: "API key removed" });
+                                  }}
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </Button>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="text-xs text-slate-500 text-center py-2">No API keys added yet</p>
+                      )}
+                    </div>
+                  )}
                 </div>
 
                 {/* Category Monitors Section */}
