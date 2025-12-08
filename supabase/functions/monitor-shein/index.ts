@@ -68,6 +68,46 @@ serve(async (req) => {
     
     if (!scrapeResponse.ok || !scrapeData.success) {
       console.error('Firecrawl error:', JSON.stringify(scrapeData));
+      
+      // Check if this is an API key/quota error and notify subscribers
+      const errorMessage = scrapeData.error || '';
+      const isApiKeyError = scrapeResponse.status === 401 || 
+                           scrapeResponse.status === 402 || 
+                           scrapeResponse.status === 403 ||
+                           errorMessage.toLowerCase().includes('quota') ||
+                           errorMessage.toLowerCase().includes('credit') ||
+                           errorMessage.toLowerCase().includes('limit') ||
+                           errorMessage.toLowerCase().includes('unauthorized') ||
+                           errorMessage.toLowerCase().includes('invalid') ||
+                           errorMessage.toLowerCase().includes('expired');
+      
+      if (isApiKeyError) {
+        const botToken = Deno.env.get('TELEGRAM_BOT_TOKEN');
+        if (botToken) {
+          const { data: subscribers } = await supabase
+            .from('telegram_subscribers')
+            .select('chat_id, first_name')
+            .eq('is_active', true);
+          
+          if (subscribers && subscribers.length > 0) {
+            const alertMessage = `⚠️ Firecrawl API Error!\n\nYour Firecrawl API key may have run out of credits or is invalid.\n\nError: ${errorMessage || 'Authentication/quota issue'}\n\nPlease update your API key in the Settings.`;
+            
+            for (const sub of subscribers) {
+              try {
+                await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ chat_id: sub.chat_id, text: alertMessage }),
+                });
+                console.log(`Firecrawl error notification sent to ${sub.chat_id}`);
+              } catch (e) {
+                console.error(`Failed to notify ${sub.chat_id}:`, e);
+              }
+            }
+          }
+        }
+      }
+      
       return new Response(JSON.stringify({ 
         success: false, 
         error: scrapeData.error || 'Failed to scrape page'
