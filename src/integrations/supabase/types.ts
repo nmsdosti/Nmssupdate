@@ -14,6 +14,39 @@ export type Database = {
   }
   public: {
     Tables: {
+      category_monitors: {
+        Row: {
+          created_at: string
+          id: string
+          is_active: boolean
+          last_item_count: number | null
+          name: string
+          threshold: number
+          updated_at: string
+          url: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          is_active?: boolean
+          last_item_count?: number | null
+          name: string
+          threshold?: number
+          updated_at?: string
+          url: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          is_active?: boolean
+          last_item_count?: number | null
+          name?: string
+          threshold?: number
+          updated_at?: string
+          url?: string
+        }
+        Relationships: []
+      }
       monitor_history: {
         Row: {
           created_at: string

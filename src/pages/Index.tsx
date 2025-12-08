@@ -4,7 +4,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Loader2, RefreshCw, Bell, BellOff, TrendingUp, Clock, ExternalLink, Settings, Timer } from "lucide-react";
+import { Loader2, RefreshCw, Bell, BellOff, TrendingUp, Clock, ExternalLink, Settings, Timer, Plus, Trash2, Layers } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 
@@ -29,6 +29,15 @@ interface HistoryItem {
   created_at: string;
 }
 
+interface CategoryMonitor {
+  id: string;
+  name: string;
+  url: string;
+  threshold: number;
+  is_active: boolean;
+  last_item_count: number | null;
+}
+
 const Index = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [result, setResult] = useState<MonitorResult | null>(null);
@@ -42,6 +51,15 @@ const Index = () => {
   const [showSettings, setShowSettings] = useState(false);
   const [isSavingThreshold, setIsSavingThreshold] = useState(false);
   const [isSavingApiKey, setIsSavingApiKey] = useState(false);
+  
+  // Category monitors state
+  const [categories, setCategories] = useState<CategoryMonitor[]>([]);
+  const [showCategories, setShowCategories] = useState(false);
+  const [newCategoryName, setNewCategoryName] = useState("");
+  const [newCategoryUrl, setNewCategoryUrl] = useState("");
+  const [newCategoryThreshold, setNewCategoryThreshold] = useState("1");
+  const [isAddingCategory, setIsAddingCategory] = useState(false);
+  
   const { toast } = useToast();
 
   // Load threshold and history from database on mount
@@ -88,6 +106,16 @@ const Index = () => {
             timestamp: latest.created_at,
           });
         }
+      }
+
+      // Load category monitors
+      const { data: categoryData } = await supabase
+        .from('category_monitors')
+        .select('*')
+        .order('created_at', { ascending: true });
+      
+      if (categoryData) {
+        setCategories(categoryData);
       }
     };
     loadData();
@@ -379,6 +407,154 @@ const Index = () => {
                   <p className="text-xs text-slate-500 mt-2">
                     Get your API key from <a href="https://firecrawl.dev" target="_blank" rel="noopener noreferrer" className="text-cyan-400 hover:underline">firecrawl.dev</a>
                   </p>
+                </div>
+
+                {/* Category Monitors Section */}
+                <div className="border-t border-slate-700/50 pt-4">
+                  <div className="flex items-center justify-between mb-4">
+                    <Label className="text-slate-300 text-sm flex items-center gap-2">
+                      <Layers className="w-4 h-4" />
+                      Category Monitors
+                    </Label>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setShowCategories(!showCategories)}
+                      className="border-slate-700 text-slate-300 hover:bg-slate-800"
+                    >
+                      {showCategories ? "Hide" : "Manage"}
+                    </Button>
+                  </div>
+                  
+                  {showCategories && (
+                    <div className="space-y-4">
+                      {/* Add new category */}
+                      <div className="bg-slate-800/30 p-3 rounded-lg border border-slate-700/30">
+                        <p className="text-xs text-slate-400 mb-3">Add a category URL to monitor (e.g., Women Jeans)</p>
+                        <div className="space-y-2">
+                          <Input
+                            type="text"
+                            value={newCategoryName}
+                            onChange={(e) => setNewCategoryName(e.target.value)}
+                            placeholder="Category name (e.g., Women Jeans)"
+                            className="bg-slate-900/50 border-slate-700 text-white placeholder:text-slate-500"
+                          />
+                          <Input
+                            type="url"
+                            value={newCategoryUrl}
+                            onChange={(e) => setNewCategoryUrl(e.target.value)}
+                            placeholder="SHEIN category URL"
+                            className="bg-slate-900/50 border-slate-700 text-white placeholder:text-slate-500"
+                          />
+                          <div className="flex gap-2">
+                            <Input
+                              type="number"
+                              value={newCategoryThreshold}
+                              onChange={(e) => setNewCategoryThreshold(e.target.value)}
+                              placeholder="Threshold"
+                              min="1"
+                              className="bg-slate-900/50 border-slate-700 text-white placeholder:text-slate-500 w-24"
+                            />
+                            <Button
+                              onClick={async () => {
+                                if (!newCategoryName.trim() || !newCategoryUrl.trim()) {
+                                  toast({
+                                    title: "Missing Info",
+                                    description: "Please enter both name and URL",
+                                    variant: "destructive",
+                                  });
+                                  return;
+                                }
+                                const th = parseInt(newCategoryThreshold, 10);
+                                if (isNaN(th) || th < 1) {
+                                  toast({
+                                    title: "Invalid Threshold",
+                                    description: "Threshold must be at least 1",
+                                    variant: "destructive",
+                                  });
+                                  return;
+                                }
+                                setIsAddingCategory(true);
+                                const { error } = await supabase
+                                  .from('category_monitors')
+                                  .insert({
+                                    name: newCategoryName.trim(),
+                                    url: newCategoryUrl.trim(),
+                                    threshold: th,
+                                  });
+                                setIsAddingCategory(false);
+                                if (error) {
+                                  toast({ title: "Error", description: "Failed to add category", variant: "destructive" });
+                                  return;
+                                }
+                                // Reload categories
+                                const { data } = await supabase.from('category_monitors').select('*').order('created_at', { ascending: true });
+                                if (data) setCategories(data);
+                                setNewCategoryName("");
+                                setNewCategoryUrl("");
+                                setNewCategoryThreshold("1");
+                                toast({ title: "Category Added", description: `Now monitoring ${newCategoryName}` });
+                              }}
+                              disabled={isAddingCategory}
+                              className="bg-emerald-600 hover:bg-emerald-500 text-white"
+                            >
+                              {isAddingCategory ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
+                            </Button>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Existing categories */}
+                      {categories.length > 0 ? (
+                        <div className="space-y-2">
+                          {categories.map((cat) => (
+                            <div key={cat.id} className="flex items-center justify-between p-3 bg-slate-800/20 rounded-lg border border-slate-700/20">
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-2">
+                                  <span className="text-white font-medium truncate">{cat.name}</span>
+                                  <Badge variant="outline" className="text-xs border-slate-600 text-slate-400">
+                                    ≥{cat.threshold}
+                                  </Badge>
+                                </div>
+                                <p className="text-xs text-slate-500 truncate">{cat.url}</p>
+                                {cat.last_item_count !== null && (
+                                  <p className="text-xs text-cyan-400">Last: {cat.last_item_count} items</p>
+                                )}
+                              </div>
+                              <div className="flex items-center gap-2 ml-2">
+                                <Input
+                                  type="number"
+                                  value={cat.threshold}
+                                  min="1"
+                                  className="bg-slate-900/50 border-slate-700 text-white w-16 h-8 text-xs"
+                                  onChange={async (e) => {
+                                    const newTh = parseInt(e.target.value, 10);
+                                    if (isNaN(newTh) || newTh < 1) return;
+                                    await supabase.from('category_monitors').update({ threshold: newTh }).eq('id', cat.id);
+                                    setCategories(prev => prev.map(c => c.id === cat.id ? { ...c, threshold: newTh } : c));
+                                  }}
+                                />
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  className="text-red-400 hover:text-red-300 hover:bg-red-500/10 h-8 w-8 p-0"
+                                  onClick={async () => {
+                                    await supabase.from('category_monitors').delete().eq('id', cat.id);
+                                    setCategories(prev => prev.filter(c => c.id !== cat.id));
+                                    toast({ title: "Deleted", description: `Removed ${cat.name}` });
+                                  }}
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </Button>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="text-xs text-slate-500 text-center py-2">No category monitors added yet</p>
+                      )}
+                    </div>
+                  )}
                 </div>
               </div>
             </CardContent>
