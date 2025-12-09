@@ -5,3 +5,11 @@ verify_jwt = false
 
 [functions.telegram-webhook]
 verify_jwt = false
+
+[functions.telegram-broadcast]
+verify_jwt = false
+
+# Cron job to run monitor-shein every 1 minute
+[cron_jobs.monitor-shein-cron]
+schedule = "*/1 * * * *"
+function = "monitor-shein"
