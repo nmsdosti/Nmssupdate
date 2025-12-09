@@ -56,6 +56,8 @@ const Index = () => {
   const [thresholdInput, setThresholdInput] = useState("1000");
   const [jumpThreshold, setJumpThreshold] = useState(100);
   const [jumpThresholdInput, setJumpThresholdInput] = useState("100");
+  const [intervalMinutes, setIntervalMinutes] = useState(1);
+  const [intervalInput, setIntervalInput] = useState("1");
   const [showSettings, setShowSettings] = useState(false);
   const [isSavingThreshold, setIsSavingThreshold] = useState(false);
   
@@ -82,7 +84,7 @@ const Index = () => {
       // Load threshold
       const { data: settings } = await supabase
         .from('monitor_settings')
-        .select('threshold, jump_threshold')
+        .select('threshold, jump_threshold, interval_minutes')
         .eq('id', 'default')
         .single();
       
@@ -91,6 +93,8 @@ const Index = () => {
         setThresholdInput(settings.threshold.toString());
         setJumpThreshold(settings.jump_threshold);
         setJumpThresholdInput(settings.jump_threshold.toString());
+        setIntervalMinutes(settings.interval_minutes);
+        setIntervalInput(settings.interval_minutes.toString());
       }
 
       // Load API keys
@@ -296,7 +300,7 @@ const Index = () => {
           <div className="flex items-center gap-2">
             <Badge variant="outline" className="border-cyan-500/30 text-cyan-400 bg-cyan-500/10">
               <Timer className="w-3 h-3 mr-1" />
-              Auto: 5 min
+              Auto: {intervalMinutes} min
             </Badge>
             <Button
               variant="ghost"
@@ -317,7 +321,7 @@ const Index = () => {
           <CardContent className="py-3">
             <div className="flex items-center justify-center gap-2 text-cyan-400 text-sm">
               <Timer className="w-4 h-4" />
-              <span>Auto-checking every 5 minutes. Alerts when items exceed {threshold.toLocaleString()} or jump by {jumpThreshold.toLocaleString()}+.</span>
+              <span>Auto-checking every {intervalMinutes} minute{intervalMinutes > 1 ? 's' : ''}. Alerts when items exceed {threshold.toLocaleString()} or jump by {jumpThreshold.toLocaleString()}+.</span>
             </div>
           </CardContent>
         </Card>
@@ -412,6 +416,61 @@ const Index = () => {
                   </div>
                   <p className="text-xs text-slate-500 mt-2">
                     Notifies when item count increases by this amount from the last check.
+                  </p>
+                </div>
+
+                <div>
+                  <Label className="text-slate-300 text-sm mb-2 block">
+                    Check Interval (minutes)
+                  </Label>
+                  <div className="flex gap-2">
+                    <Input
+                      type="number"
+                      value={intervalInput}
+                      onChange={(e) => setIntervalInput(e.target.value)}
+                      placeholder="e.g. 1"
+                      min="1"
+                      max="60"
+                      className="bg-slate-900/50 border-slate-700 text-white placeholder:text-slate-500 max-w-xs"
+                    />
+                    <Button 
+                      onClick={async () => {
+                        const newInterval = parseInt(intervalInput, 10);
+                        if (isNaN(newInterval) || newInterval < 1 || newInterval > 60) {
+                          toast({
+                            title: "Invalid Interval",
+                            description: "Please enter a number between 1 and 60",
+                            variant: "destructive",
+                          });
+                          return;
+                        }
+                        const { error } = await supabase
+                          .from('monitor_settings')
+                          .update({ interval_minutes: newInterval })
+                          .eq('id', 'default');
+                        
+                        if (error) {
+                          toast({
+                            title: "Error",
+                            description: "Failed to save interval",
+                            variant: "destructive",
+                          });
+                          return;
+                        }
+                        
+                        setIntervalMinutes(newInterval);
+                        toast({
+                          title: "Interval Updated",
+                          description: `Monitoring will run every ${newInterval} minute${newInterval > 1 ? 's' : ''}. Note: Server cron job is fixed at 1 min.`,
+                        });
+                      }}
+                      className="bg-emerald-600 hover:bg-emerald-500 text-white"
+                    >
+                      Save
+                    </Button>
+                  </div>
+                  <p className="text-xs text-slate-500 mt-2">
+                    How often to check for stock updates (1-60 minutes). Currently set to run every 1 minute on the server.
                   </p>
                 </div>
 
