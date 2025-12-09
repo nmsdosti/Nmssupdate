@@ -92,9 +92,21 @@ serve(async (req) => {
     // Get settings from database
     const { data: settings } = await supabase
       .from('monitor_settings')
-      .select('threshold, jump_threshold')
+      .select('threshold, jump_threshold, is_paused')
       .eq('id', 'default')
       .single();
+    
+    // Check if monitoring is paused
+    if (settings?.is_paused) {
+      console.log('Monitoring is paused. Skipping check.');
+      return new Response(JSON.stringify({ 
+        success: true, 
+        paused: true,
+        message: 'Monitoring is currently paused'
+      }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
     
     const threshold = typeof body.threshold === 'number' ? body.threshold : (settings?.threshold ?? 1000);
     const jumpThreshold = settings?.jump_threshold ?? 100;
