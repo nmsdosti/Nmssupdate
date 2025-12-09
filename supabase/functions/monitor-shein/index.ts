@@ -92,7 +92,7 @@ serve(async (req) => {
     // Get settings from database
     const { data: settings } = await supabase
       .from('monitor_settings')
-      .select('threshold, jump_threshold, is_paused')
+      .select('threshold, jump_threshold, is_paused, last_api_key_alert_at')
       .eq('id', 'default')
       .single();
     
@@ -110,6 +110,7 @@ serve(async (req) => {
     
     const threshold = typeof body.threshold === 'number' ? body.threshold : (settings?.threshold ?? 1000);
     const jumpThreshold = settings?.jump_threshold ?? 100;
+    const lastApiKeyAlertAt = settings?.last_api_key_alert_at ? new Date(settings.last_api_key_alert_at) : null;
     console.log('Loaded threshold from database:', threshold);
     console.log('Jump threshold:', jumpThreshold);
     
@@ -177,30 +178,45 @@ serve(async (req) => {
     if (!mainResult.success) {
       console.error('Main scrape failed:', mainResult.error);
       
-      // If all keys failed, send notification
+      // If all keys failed, send notification (rate limited to once per hour)
       if (mainResult.allKeysFailed) {
-        const botToken = Deno.env.get('TELEGRAM_BOT_TOKEN');
-        if (botToken) {
-          const { data: subscribers } = await supabase
-            .from('telegram_subscribers')
-            .select('chat_id, first_name')
-            .eq('is_active', true);
-          
-          if (subscribers && subscribers.length > 0) {
-            const alertMessage = `⚠️ All Firecrawl API Keys Exhausted!\n\nAll ${apiKeys.length} configured API keys have failed or run out of credits.\n\nPlease add new API keys or replenish existing ones in Settings.`;
+        const now = new Date();
+        const oneHourAgo = new Date(now.getTime() - 60 * 60 * 1000);
+        const shouldSendAlert = !lastApiKeyAlertAt || lastApiKeyAlertAt < oneHourAgo;
+        
+        if (shouldSendAlert) {
+          console.log('Sending API key exhausted notification (rate limit: once per hour)');
+          const botToken = Deno.env.get('TELEGRAM_BOT_TOKEN');
+          if (botToken) {
+            const { data: subscribers } = await supabase
+              .from('telegram_subscribers')
+              .select('chat_id, first_name')
+              .eq('is_active', true);
             
-            for (const sub of subscribers) {
-              try {
-                await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ chat_id: sub.chat_id, text: alertMessage }),
-                });
-              } catch (e) {
-                console.error(`Failed to notify ${sub.chat_id}:`, e);
+            if (subscribers && subscribers.length > 0) {
+              const alertMessage = `⚠️ All Firecrawl API Keys Exhausted!\n\nAll ${apiKeys.length} configured API keys have failed or run out of credits.\n\nPlease add new API keys or replenish existing ones in Settings.\n\n(This alert is sent once per hour)`;
+              
+              for (const sub of subscribers) {
+                try {
+                  await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ chat_id: sub.chat_id, text: alertMessage }),
+                  });
+                } catch (e) {
+                  console.error(`Failed to notify ${sub.chat_id}:`, e);
+                }
               }
+              
+              // Update last alert time
+              await supabase
+                .from('monitor_settings')
+                .update({ last_api_key_alert_at: now.toISOString() })
+                .eq('id', 'default');
             }
           }
+        } else {
+          console.log('Skipping API key alert - already sent within the last hour');
         }
       }
       
