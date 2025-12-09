@@ -227,6 +227,9 @@ const Index = () => {
     });
   };
 
+  // Bulk API keys state
+  const [bulkApiKeys, setBulkApiKeys] = useState<string[]>(["", "", "", "", ""]);
+
   const addApiKey = async () => {
     const key = newApiKey.trim();
     if (!key) {
@@ -238,10 +241,10 @@ const Index = () => {
       return;
     }
     
-    if (apiKeys.length >= 20) {
+    if (apiKeys.length >= 50) {
       toast({
         title: "Limit Reached",
-        description: "Maximum 20 API keys allowed",
+        description: "Maximum 50 API keys allowed",
         variant: "destructive",
       });
       return;
@@ -281,6 +284,64 @@ const Index = () => {
     toast({
       title: "API Key Added",
       description: "New Firecrawl API key has been saved",
+    });
+  };
+
+  const addBulkApiKeys = async () => {
+    const validKeys = bulkApiKeys.filter(k => k.trim().length > 0);
+    if (validKeys.length === 0) {
+      toast({
+        title: "No Keys",
+        description: "Please enter at least one API key",
+        variant: "destructive",
+      });
+      return;
+    }
+    
+    if (apiKeys.length + validKeys.length > 50) {
+      toast({
+        title: "Limit Exceeded",
+        description: `Can only add ${50 - apiKeys.length} more keys (max 50)`,
+        variant: "destructive",
+      });
+      return;
+    }
+    
+    setIsAddingApiKey(true);
+    const keysToInsert = validKeys.map((key, index) => ({
+      api_key: key.trim(),
+      label: `Bulk ${apiKeys.length + index + 1}`,
+    }));
+
+    const { error } = await supabase
+      .from('firecrawl_api_keys')
+      .insert(keysToInsert);
+    
+    setIsAddingApiKey(false);
+    
+    if (error) {
+      toast({
+        title: "Error",
+        description: "Failed to add API keys",
+        variant: "destructive",
+      });
+      return;
+    }
+    
+    // Reload API keys
+    const { data } = await supabase
+      .from('firecrawl_api_keys')
+      .select('*')
+      .order('created_at', { ascending: true });
+    
+    if (data) {
+      setApiKeys(data);
+    }
+    
+    setBulkApiKeys(["", "", "", "", ""]);
+    toast({
+      title: "API Keys Added",
+      description: `${validKeys.length} Firecrawl API key(s) added`,
     });
   };
 
@@ -495,15 +556,47 @@ const Index = () => {
                   
                   {showApiKeys && (
                     <div className="space-y-4">
-                      {/* Add new API key */}
+                      {/* Bulk add API keys (5 at a time) */}
                       <div className="bg-slate-800/30 p-3 rounded-lg border border-slate-700/30">
-                        <p className="text-xs text-slate-400 mb-3">Add API key (max 20). Keys are used in order, rotating on failure.</p>
+                        <p className="text-xs text-slate-400 mb-3">Add up to 5 API keys at once (max 50 total). Keys are used in order, rotating on failure.</p>
+                        <div className="space-y-2">
+                          {bulkApiKeys.map((key, index) => (
+                            <Input
+                              key={index}
+                              type="text"
+                              value={key}
+                              onChange={(e) => {
+                                const updated = [...bulkApiKeys];
+                                updated[index] = e.target.value;
+                                setBulkApiKeys(updated);
+                              }}
+                              placeholder={`API Key ${index + 1} (fc-xxxxx...)`}
+                              className="bg-slate-900/50 border-slate-700 text-white placeholder:text-slate-500"
+                            />
+                          ))}
+                          <Button
+                            onClick={addBulkApiKeys}
+                            disabled={isAddingApiKey || apiKeys.length >= 50}
+                            className="bg-emerald-600 hover:bg-emerald-500 text-white w-full"
+                          >
+                            {isAddingApiKey ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Plus className="w-4 h-4 mr-2" />}
+                            Add Keys ({bulkApiKeys.filter(k => k.trim()).length} entered)
+                          </Button>
+                        </div>
+                        <p className="text-xs text-slate-500 mt-2">
+                          Get your API key from <a href="https://firecrawl.dev" target="_blank" rel="noopener noreferrer" className="text-cyan-400 hover:underline">firecrawl.dev</a>
+                        </p>
+                      </div>
+
+                      {/* Single key add */}
+                      <div className="bg-slate-800/20 p-3 rounded-lg border border-slate-700/20">
+                        <p className="text-xs text-slate-400 mb-2">Or add single key with label:</p>
                         <div className="space-y-2">
                           <Input
                             type="text"
                             value={newApiKeyLabel}
                             onChange={(e) => setNewApiKeyLabel(e.target.value)}
-                            placeholder="Label (optional, e.g. 'Primary')"
+                            placeholder="Label (optional)"
                             className="bg-slate-900/50 border-slate-700 text-white placeholder:text-slate-500"
                           />
                           <div className="flex gap-2">
@@ -516,16 +609,13 @@ const Index = () => {
                             />
                             <Button
                               onClick={addApiKey}
-                              disabled={isAddingApiKey || apiKeys.length >= 20}
-                              className="bg-emerald-600 hover:bg-emerald-500 text-white"
+                              disabled={isAddingApiKey || apiKeys.length >= 50}
+                              className="bg-cyan-600 hover:bg-cyan-500 text-white"
                             >
                               {isAddingApiKey ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
                             </Button>
                           </div>
                         </div>
-                        <p className="text-xs text-slate-500 mt-2">
-                          Get your API key from <a href="https://firecrawl.dev" target="_blank" rel="noopener noreferrer" className="text-cyan-400 hover:underline">firecrawl.dev</a>
-                        </p>
                       </div>
 
                       {/* Existing API keys */}
