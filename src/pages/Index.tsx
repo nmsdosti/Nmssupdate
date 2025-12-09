@@ -4,7 +4,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Loader2, RefreshCw, Bell, BellOff, TrendingUp, Clock, ExternalLink, Settings, Timer, Plus, Trash2, Layers, Minus } from "lucide-react";
+import { Loader2, RefreshCw, Bell, BellOff, TrendingUp, Clock, ExternalLink, Settings, Timer, Plus, Trash2, Layers, Minus, Pause, Play } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 
@@ -58,6 +58,8 @@ const Index = () => {
   const [jumpThresholdInput, setJumpThresholdInput] = useState("100");
   const [intervalMinutes, setIntervalMinutes] = useState(1);
   const [intervalInput, setIntervalInput] = useState("1");
+  const [isPaused, setIsPaused] = useState(false);
+  const [isTogglingPause, setIsTogglingPause] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [isSavingThreshold, setIsSavingThreshold] = useState(false);
   
@@ -84,7 +86,7 @@ const Index = () => {
       // Load threshold
       const { data: settings } = await supabase
         .from('monitor_settings')
-        .select('threshold, jump_threshold, interval_minutes')
+        .select('threshold, jump_threshold, interval_minutes, is_paused')
         .eq('id', 'default')
         .single();
       
@@ -95,6 +97,7 @@ const Index = () => {
         setJumpThresholdInput(settings.jump_threshold.toString());
         setIntervalMinutes(settings.interval_minutes);
         setIntervalInput(settings.interval_minutes.toString());
+        setIsPaused(settings.is_paused ?? false);
       }
 
       // Load API keys
@@ -359,6 +362,12 @@ const Index = () => {
             </div>
           </div>
           <div className="flex items-center gap-2">
+            {isPaused && (
+              <Badge variant="outline" className="border-red-500/30 text-red-400 bg-red-500/10">
+                <Pause className="w-3 h-3 mr-1" />
+                Paused
+              </Badge>
+            )}
             <Badge variant="outline" className="border-cyan-500/30 text-cyan-400 bg-cyan-500/10">
               <Timer className="w-3 h-3 mr-1" />
               Auto: {intervalMinutes} min
@@ -398,6 +407,56 @@ const Index = () => {
             </CardHeader>
             <CardContent>
               <div className="space-y-6">
+                {/* Pause/Resume Monitoring */}
+                <div className="flex items-center justify-between p-4 rounded-lg bg-slate-800/50 border border-slate-700/50">
+                  <div>
+                    <Label className="text-slate-300 text-sm block">
+                      Monitoring Status
+                    </Label>
+                    <p className="text-xs text-slate-500 mt-1">
+                      {isPaused ? "Monitoring is paused. Auto-checks will not run." : "Monitoring is active. Auto-checks running every " + intervalMinutes + " min."}
+                    </p>
+                  </div>
+                  <Button
+                    onClick={async () => {
+                      setIsTogglingPause(true);
+                      const { error } = await supabase
+                        .from('monitor_settings')
+                        .update({ is_paused: !isPaused })
+                        .eq('id', 'default');
+                      
+                      setIsTogglingPause(false);
+                      
+                      if (error) {
+                        toast({
+                          title: "Error",
+                          description: "Failed to update monitoring status",
+                          variant: "destructive",
+                        });
+                        return;
+                      }
+                      
+                      setIsPaused(!isPaused);
+                      toast({
+                        title: isPaused ? "Monitoring Resumed" : "Monitoring Paused",
+                        description: isPaused ? "Auto-checks will now run" : "Auto-checks have been stopped",
+                      });
+                    }}
+                    disabled={isTogglingPause}
+                    variant={isPaused ? "default" : "destructive"}
+                    className={isPaused ? "bg-emerald-600 hover:bg-emerald-500" : ""}
+                  >
+                    {isTogglingPause ? (
+                      <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                    ) : isPaused ? (
+                      <Play className="w-4 h-4 mr-2" />
+                    ) : (
+                      <Pause className="w-4 h-4 mr-2" />
+                    )}
+                    {isPaused ? "Resume" : "Stop"}
+                  </Button>
+                </div>
+
                 <div>
                   <Label className="text-slate-300 text-sm mb-2 block">
                     Alert Threshold (send Telegram when items exceed this)
