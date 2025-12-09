@@ -118,6 +118,7 @@ export type Database = {
           created_at: string
           firecrawl_api_key: string | null
           id: string
+          interval_minutes: number
           jump_threshold: number
           threshold: number
           updated_at: string
@@ -126,6 +127,7 @@ export type Database = {
           created_at?: string
           firecrawl_api_key?: string | null
           id?: string
+          interval_minutes?: number
           jump_threshold?: number
           threshold?: number
           updated_at?: string
@@ -134,6 +136,7 @@ export type Database = {
           created_at?: string
           firecrawl_api_key?: string | null
           id?: string
+          interval_minutes?: number
           jump_threshold?: number
           threshold?: number
           updated_at?: string
