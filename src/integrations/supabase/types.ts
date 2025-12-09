@@ -121,6 +121,7 @@ export type Database = {
           interval_minutes: number
           is_paused: boolean
           jump_threshold: number
+          last_api_key_alert_at: string | null
           threshold: number
           updated_at: string
         }
@@ -131,6 +132,7 @@ export type Database = {
           interval_minutes?: number
           is_paused?: boolean
           jump_threshold?: number
+          last_api_key_alert_at?: string | null
           threshold?: number
           updated_at?: string
         }
@@ -141,6 +143,7 @@ export type Database = {
           interval_minutes?: number
           is_paused?: boolean
           jump_threshold?: number
+          last_api_key_alert_at?: string | null
           threshold?: number
           updated_at?: string
         }
