@@ -92,7 +92,7 @@ serve(async (req) => {
     // Get settings from database
     const { data: settings } = await supabase
       .from('monitor_settings')
-      .select('threshold, jump_threshold, is_paused, last_api_key_alert_at')
+      .select('threshold, jump_threshold, is_paused, last_api_key_alert_at, interval_minutes')
       .eq('id', 'default')
       .single();
     
@@ -107,6 +107,34 @@ serve(async (req) => {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
+    
+    // Check if enough time has passed since last check (interval logic)
+    const intervalMinutes = settings?.interval_minutes ?? 1;
+    const { data: lastHistory } = await supabase
+      .from('monitor_history')
+      .select('created_at')
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    
+    if (lastHistory?.created_at) {
+      const lastCheckTime = new Date(lastHistory.created_at);
+      const now = new Date();
+      const minutesSinceLastCheck = (now.getTime() - lastCheckTime.getTime()) / (1000 * 60);
+      
+      if (minutesSinceLastCheck < intervalMinutes) {
+        console.log(`Skipping check - only ${minutesSinceLastCheck.toFixed(1)} mins since last check (interval: ${intervalMinutes} mins)`);
+        return new Response(JSON.stringify({ 
+          success: true, 
+          skipped: true,
+          message: `Waiting for interval (${minutesSinceLastCheck.toFixed(1)}/${intervalMinutes} mins)`
+        }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+    }
+    
+    console.log(`Interval check passed (${intervalMinutes} mins). Running monitor...`);
     
     const threshold = typeof body.threshold === 'number' ? body.threshold : (settings?.threshold ?? 1000);
     const jumpThreshold = settings?.jump_threshold ?? 100;
@@ -233,14 +261,14 @@ serve(async (req) => {
     console.log('Found main count:', rawItemCount);
 
     // Get last item count from history for jump detection
-    const { data: lastHistory } = await supabase
+    const { data: lastHistoryForJump } = await supabase
       .from('monitor_history')
       .select('item_count')
       .order('created_at', { ascending: false })
       .limit(1)
       .maybeSingle();
     
-    const lastItemCount = lastHistory?.item_count ?? null;
+    const lastItemCount = lastHistoryForJump?.item_count ?? null;
 
     // Check category monitors
     const { data: categoryMonitors } = await supabase
