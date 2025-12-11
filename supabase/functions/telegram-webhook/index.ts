@@ -133,7 +133,7 @@ ${PRICING_MESSAGE}`;
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             chat_id: chatId,
-            photo: `${projectUrl}/storage/v1/object/public/assets/payment-qr.jpg`,
+            photo: `${projectUrl}/storage/v1/object/public/assets/sheinnms%20qr.jpg`,
             caption: '📱 Scan this QR code to pay',
           }),
         });
