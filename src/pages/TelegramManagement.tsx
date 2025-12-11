@@ -426,81 +426,83 @@ export default function TelegramManagement() {
 
         {/* Subscribers Table */}
         {activeTab === "subscribers" && (
-          <Card>
-            <CardContent className="p-0">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Name</TableHead>
-                    <TableHead>Username</TableHead>
-                    <TableHead>Chat ID</TableHead>
-                    <TableHead>Subscription</TableHead>
-                    <TableHead>Extend</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead className="w-[60px]"></TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {subscribers.map((sub) => {
-                    const subStatus = getSubscriptionStatus(sub);
-                    return (
-                      <TableRow key={sub.id}>
-                        <TableCell>{sub.first_name || "-"}</TableCell>
-                        <TableCell>{sub.username ? `@${sub.username}` : "-"}</TableCell>
-                        <TableCell className="font-mono text-sm">{sub.chat_id}</TableCell>
-                        <TableCell>
-                          <span className={`px-2 py-1 rounded-full text-xs ${subStatus.color}`}>
-                            {subStatus.label}
-                          </span>
-                        </TableCell>
-                        <TableCell>
-                          <Select onValueChange={(val) => extendSubscription(sub.chat_id, parseInt(val))}>
-                            <SelectTrigger className="w-[120px]">
-                              <SelectValue placeholder="Extend..." />
-                            </SelectTrigger>
-                            <SelectContent position="popper" className="z-50">
-                              <SelectItem value="3">+3 days</SelectItem>
-                              <SelectItem value="7">+7 days</SelectItem>
-                              <SelectItem value="30">+30 days</SelectItem>
-                            </SelectContent>
-                          </Select>
-                        </TableCell>
-                        <TableCell>
-                          <Select 
-                            value={sub.is_active ? "active" : (sub.subscription_expires_at ? "hold" : "stop")}
-                            onValueChange={(val) => updateSubscriberStatus(sub.chat_id, val as "active" | "hold" | "stop")}
-                          >
-                            <SelectTrigger className="w-[110px]">
-                              <SelectValue placeholder="Status" />
-                            </SelectTrigger>
-                            <SelectContent position="popper" className="z-50">
-                              <SelectItem value="active">Active</SelectItem>
-                              <SelectItem value="hold">Hold</SelectItem>
-                              <SelectItem value="stop">Stop</SelectItem>
-                            </SelectContent>
-                          </Select>
-                        </TableCell>
-                        <TableCell>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={() => deleteSubscriber(sub.id)}
-                          >
-                            <Trash2 className="w-4 h-4 text-destructive" />
-                          </Button>
+          <Card className="overflow-visible">
+            <CardHeader>
+              <CardTitle>All Subscribers</CardTitle>
+            </CardHeader>
+            <CardContent className="p-0 overflow-visible">
+              <div className="overflow-x-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Name</TableHead>
+                      <TableHead>Username</TableHead>
+                      <TableHead>Chat ID</TableHead>
+                      <TableHead>Days Left</TableHead>
+                      <TableHead>Extend</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead className="w-[60px]"></TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {subscribers.map((sub) => {
+                      const subStatus = getSubscriptionStatus(sub);
+                      const currentStatus = sub.is_active ? "active" : (sub.subscription_expires_at ? "hold" : "stop");
+                      return (
+                        <TableRow key={sub.id}>
+                          <TableCell>{sub.first_name || "-"}</TableCell>
+                          <TableCell>{sub.username ? `@${sub.username}` : "-"}</TableCell>
+                          <TableCell className="font-mono text-sm">{sub.chat_id}</TableCell>
+                          <TableCell>
+                            <span className={`px-2 py-1 rounded-full text-xs ${subStatus.color}`}>
+                              {subStatus.label}
+                            </span>
+                          </TableCell>
+                          <TableCell>
+                            <select 
+                              className="w-[100px] h-9 px-2 rounded-md border border-input bg-background text-sm"
+                              onChange={(e) => extendSubscription(sub.chat_id, parseInt(e.target.value))}
+                              defaultValue=""
+                            >
+                              <option value="" disabled>Extend...</option>
+                              <option value="3">+3 days</option>
+                              <option value="7">+7 days</option>
+                              <option value="30">+30 days</option>
+                            </select>
+                          </TableCell>
+                          <TableCell>
+                            <select 
+                              className="w-[100px] h-9 px-2 rounded-md border border-input bg-background text-sm"
+                              value={currentStatus}
+                              onChange={(e) => updateSubscriberStatus(sub.chat_id, e.target.value as "active" | "hold" | "stop")}
+                            >
+                              <option value="active">Active</option>
+                              <option value="hold">Hold</option>
+                              <option value="stop">Stop</option>
+                            </select>
+                          </TableCell>
+                          <TableCell>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => deleteSubscriber(sub.id)}
+                            >
+                              <Trash2 className="w-4 h-4 text-destructive" />
+                            </Button>
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
+                    {subscribers.length === 0 && (
+                      <TableRow>
+                        <TableCell colSpan={7} className="text-center text-muted-foreground py-8">
+                          No subscribers yet
                         </TableCell>
                       </TableRow>
-                    );
-                  })}
-                  {subscribers.length === 0 && (
-                    <TableRow>
-                      <TableCell colSpan={6} className="text-center text-muted-foreground py-8">
-                        No subscribers yet
-                      </TableCell>
-                    </TableRow>
-                  )}
-                </TableBody>
-              </Table>
+                    )}
+                  </TableBody>
+                </Table>
+              </div>
             </CardContent>
           </Card>
         )}
