@@ -174,6 +174,21 @@ export default function TelegramManagement() {
     setSubscriptionRequests(subscriptionRequests.filter(r => r.id !== request.id));
   };
 
+  const activateSubscriber = async (chatId: string) => {
+    const { error } = await supabase
+      .from("telegram_subscribers")
+      .update({ is_active: true })
+      .eq("chat_id", chatId);
+
+    if (error) {
+      toast({ title: "Error activating subscriber", variant: "destructive" });
+      return;
+    }
+
+    toast({ title: "Subscriber activated" });
+    loadData();
+  };
+
   const extendSubscription = async (chatId: string, days: number) => {
     const subscriber = subscribers.find(s => s.chat_id === chatId);
     if (!subscriber) return;
@@ -440,13 +455,25 @@ export default function TelegramManagement() {
                           </Select>
                         </TableCell>
                         <TableCell>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={() => deleteSubscriber(sub.id)}
-                          >
-                            <Trash2 className="w-4 h-4 text-destructive" />
-                          </Button>
+                          <div className="flex gap-1">
+                            {!sub.is_active && (
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => activateSubscriber(sub.chat_id)}
+                                className="text-green-600 hover:text-green-700"
+                              >
+                                Activate
+                              </Button>
+                            )}
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => deleteSubscriber(sub.id)}
+                            >
+                              <Trash2 className="w-4 h-4 text-destructive" />
+                            </Button>
+                          </div>
                         </TableCell>
                       </TableRow>
                     );
