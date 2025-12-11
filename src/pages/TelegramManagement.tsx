@@ -458,7 +458,7 @@ export default function TelegramManagement() {
                             <SelectTrigger className="w-[120px]">
                               <SelectValue placeholder="Extend..." />
                             </SelectTrigger>
-                            <SelectContent>
+                            <SelectContent position="popper" className="z-50">
                               <SelectItem value="3">+3 days</SelectItem>
                               <SelectItem value="7">+7 days</SelectItem>
                               <SelectItem value="30">+30 days</SelectItem>
@@ -470,10 +470,10 @@ export default function TelegramManagement() {
                             value={sub.is_active ? "active" : (sub.subscription_expires_at ? "hold" : "stop")}
                             onValueChange={(val) => updateSubscriberStatus(sub.chat_id, val as "active" | "hold" | "stop")}
                           >
-                            <SelectTrigger className="w-[100px]">
-                              <SelectValue />
+                            <SelectTrigger className="w-[110px]">
+                              <SelectValue placeholder="Status" />
                             </SelectTrigger>
-                            <SelectContent>
+                            <SelectContent position="popper" className="z-50">
                               <SelectItem value="active">Active</SelectItem>
                               <SelectItem value="hold">Hold</SelectItem>
                               <SelectItem value="stop">Stop</SelectItem>
