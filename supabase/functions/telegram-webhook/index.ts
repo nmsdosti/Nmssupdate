@@ -197,11 +197,11 @@ ${PRICING_MESSAGE}`;
       });
 
       // Ask for plan selection
-      await sendUserMessage(`📝 UTR ID received: \`${utrId}\`\n\nPlease select your plan by sending:\n• \`3days\` for 3 Days (₹50)\n• \`1week\` for 1 Week (₹100)\n• \`1month\` for 1 Month (₹400)`);
+      await sendUserMessage(`📝 UTR ID received: \`${utrId}\`\n\nPlease select your plan by sending:\n1️⃣ for 3 Days (₹50)\n2️⃣ for 1 Week (₹100)\n3️⃣ for 1 Month (₹400)`);
 
       console.log(`UTR received from ${chatId} (${firstName || username}): ${utrId}`);
 
-    } else if (['3days', '1week', '1month', '3 days', '1 week', '1 month'].includes(text.toLowerCase().replace(/\s/g, ''))) {
+    } else if (['1', '2', '3', '3days', '1week', '1month', '3 days', '1 week', '1 month'].includes(text.toLowerCase().replace(/\s/g, ''))) {
       // User selected a plan - find their pending UTR
       const { data: recentMessages } = await supabase
         .from('telegram_messages')
@@ -226,11 +226,11 @@ ${PRICING_MESSAGE}`;
       let amount: number;
       let planDisplay: string;
 
-      if (normalizedPlan === '3days') {
+      if (normalizedPlan === '1' || normalizedPlan === '3days') {
         planType = '3_days';
         amount = 50;
         planDisplay = '3 Days';
-      } else if (normalizedPlan === '1week') {
+      } else if (normalizedPlan === '2' || normalizedPlan === '1week') {
         planType = '1_week';
         amount = 100;
         planDisplay = '1 Week';
