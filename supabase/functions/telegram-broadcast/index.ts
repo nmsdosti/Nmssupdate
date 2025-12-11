@@ -17,7 +17,7 @@ serve(async (req) => {
   const botToken = Deno.env.get('TELEGRAM_BOT_TOKEN')!;
 
   try {
-    const { message, chatIds } = await req.json();
+    const { message, chatIds, skipSubscriptionCheck } = await req.json();
 
     if (!message) {
       return new Response(JSON.stringify({ success: false, error: 'Message is required' }), {
@@ -27,12 +27,13 @@ serve(async (req) => {
     }
 
     let targetChatIds: string[] = [];
+    const now = new Date().toISOString();
 
     if (chatIds && chatIds.length > 0) {
-      // Send to specific chat IDs
+      // Send to specific chat IDs (for admin broadcast, skip subscription check)
       targetChatIds = chatIds;
-    } else {
-      // Send to all active subscribers
+    } else if (skipSubscriptionCheck) {
+      // Send to all active subscribers without checking subscription
       const { data: subscribers } = await supabase
         .from('telegram_subscribers')
         .select('chat_id')
@@ -41,6 +42,19 @@ serve(async (req) => {
       if (subscribers) {
         targetChatIds = subscribers.map(s => s.chat_id);
       }
+    } else {
+      // Send only to subscribers with active subscriptions
+      const { data: subscribers } = await supabase
+        .from('telegram_subscribers')
+        .select('chat_id, subscription_expires_at')
+        .eq('is_active', true)
+        .gt('subscription_expires_at', now);
+
+      if (subscribers) {
+        targetChatIds = subscribers.map(s => s.chat_id);
+      }
+      
+      console.log(`Found ${targetChatIds.length} subscribers with active subscriptions`);
     }
 
     let successCount = 0;
@@ -54,6 +68,7 @@ serve(async (req) => {
           body: JSON.stringify({
             chat_id: chatId,
             text: message,
+            parse_mode: 'Markdown',
           }),
         });
 

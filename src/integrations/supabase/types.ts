@@ -183,6 +183,7 @@ export type Database = {
           id: string
           is_active: boolean
           subscribed_at: string
+          subscription_expires_at: string | null
           username: string | null
         }
         Insert: {
@@ -191,6 +192,7 @@ export type Database = {
           id?: string
           is_active?: boolean
           subscribed_at?: string
+          subscription_expires_at?: string | null
           username?: string | null
         }
         Update: {
@@ -199,7 +201,53 @@ export type Database = {
           id?: string
           is_active?: boolean
           subscribed_at?: string
+          subscription_expires_at?: string | null
           username?: string | null
+        }
+        Relationships: []
+      }
+      telegram_subscriptions: {
+        Row: {
+          amount: number
+          approved_at: string | null
+          chat_id: string
+          created_at: string
+          expires_at: string | null
+          first_name: string | null
+          id: string
+          plan_type: string
+          requested_at: string
+          status: Database["public"]["Enums"]["subscription_status"]
+          username: string | null
+          utr_id: string | null
+        }
+        Insert: {
+          amount: number
+          approved_at?: string | null
+          chat_id: string
+          created_at?: string
+          expires_at?: string | null
+          first_name?: string | null
+          id?: string
+          plan_type: string
+          requested_at?: string
+          status?: Database["public"]["Enums"]["subscription_status"]
+          username?: string | null
+          utr_id?: string | null
+        }
+        Update: {
+          amount?: number
+          approved_at?: string | null
+          chat_id?: string
+          created_at?: string
+          expires_at?: string | null
+          first_name?: string | null
+          id?: string
+          plan_type?: string
+          requested_at?: string
+          status?: Database["public"]["Enums"]["subscription_status"]
+          username?: string | null
+          utr_id?: string | null
         }
         Relationships: []
       }
@@ -211,7 +259,7 @@ export type Database = {
       [_ in never]: never
     }
     Enums: {
-      [_ in never]: never
+      subscription_status: "pending" | "active" | "expired"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -338,6 +386,8 @@ export type CompositeTypes<
 
 export const Constants = {
   public: {
-    Enums: {},
+    Enums: {
+      subscription_status: ["pending", "active", "expired"],
+    },
   },
 } as const
