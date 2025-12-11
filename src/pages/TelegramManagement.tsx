@@ -174,18 +174,28 @@ export default function TelegramManagement() {
     setSubscriptionRequests(subscriptionRequests.filter(r => r.id !== request.id));
   };
 
-  const activateSubscriber = async (chatId: string) => {
+  const updateSubscriberStatus = async (chatId: string, status: "active" | "hold" | "stop") => {
+    const updates: { is_active: boolean; subscription_expires_at?: string | null } = {
+      is_active: status === "active",
+    };
+    
+    // If stopping, clear subscription
+    if (status === "stop") {
+      updates.subscription_expires_at = null;
+    }
+
     const { error } = await supabase
       .from("telegram_subscribers")
-      .update({ is_active: true })
+      .update(updates)
       .eq("chat_id", chatId);
 
     if (error) {
-      toast({ title: "Error activating subscriber", variant: "destructive" });
+      toast({ title: "Error updating status", variant: "destructive" });
       return;
     }
 
-    toast({ title: "Subscriber activated" });
+    const statusLabels = { active: "Active", hold: "On Hold", stop: "Stopped" };
+    toast({ title: `Subscriber set to ${statusLabels[status]}` });
     loadData();
   };
 
@@ -426,7 +436,8 @@ export default function TelegramManagement() {
                     <TableHead>Chat ID</TableHead>
                     <TableHead>Subscription</TableHead>
                     <TableHead>Extend</TableHead>
-                    <TableHead className="w-[80px]">Actions</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead className="w-[60px]"></TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -455,25 +466,28 @@ export default function TelegramManagement() {
                           </Select>
                         </TableCell>
                         <TableCell>
-                          <div className="flex gap-1">
-                            {!sub.is_active && (
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                onClick={() => activateSubscriber(sub.chat_id)}
-                                className="text-green-600 hover:text-green-700"
-                              >
-                                Activate
-                              </Button>
-                            )}
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              onClick={() => deleteSubscriber(sub.id)}
-                            >
-                              <Trash2 className="w-4 h-4 text-destructive" />
-                            </Button>
-                          </div>
+                          <Select 
+                            value={sub.is_active ? "active" : (sub.subscription_expires_at ? "hold" : "stop")}
+                            onValueChange={(val) => updateSubscriberStatus(sub.chat_id, val as "active" | "hold" | "stop")}
+                          >
+                            <SelectTrigger className="w-[100px]">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="active">Active</SelectItem>
+                              <SelectItem value="hold">Hold</SelectItem>
+                              <SelectItem value="stop">Stop</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </TableCell>
+                        <TableCell>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => deleteSubscriber(sub.id)}
+                          >
+                            <Trash2 className="w-4 h-4 text-destructive" />
+                          </Button>
                         </TableCell>
                       </TableRow>
                     );
