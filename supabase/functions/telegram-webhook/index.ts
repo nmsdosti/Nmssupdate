@@ -6,6 +6,8 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
+const ADMIN_CHAT_ID = '801475049';
+
 const PRICING_MESSAGE = `💰 *SHEIN Monitor Subscription Plans*
 
 📦 *3 Days* - ₹50
@@ -16,14 +18,9 @@ To subscribe:
 1️⃣ Scan the QR code below and pay
 2️⃣ After payment, send your UTR ID like this:
    \`UTR: 123456789012\`
+3️⃣ Then select your plan
 
 Your subscription will be activated after verification!`;
-
-const SUBSCRIPTION_EXPIRED_MESSAGE = `⏰ *Your subscription has expired!*
-
-To continue receiving SHEIN Monitor alerts, please renew your subscription.
-
-${PRICING_MESSAGE}`;
 
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
@@ -34,9 +31,6 @@ serve(async (req) => {
   const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
   const supabase = createClient(supabaseUrl, supabaseKey);
   const botToken = Deno.env.get('TELEGRAM_BOT_TOKEN')!;
-
-  // QR code URL - hosted in public folder
-  const qrCodeUrl = `${supabaseUrl.replace('.supabase.co', '')}/storage/v1/object/public/assets/payment-qr.jpg`;
 
   try {
     const update = await req.json();
@@ -55,79 +49,72 @@ serve(async (req) => {
     const firstName = message.from?.first_name || null;
 
     // Helper function to send message
-    const sendMessage = async (text: string, parseMode = 'Markdown') => {
+    const sendMessage = async (targetChatId: string, text: string, parseMode = 'Markdown') => {
       await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          chat_id: chatId,
+          chat_id: targetChatId,
           text: text,
           parse_mode: parseMode,
         }),
       });
     };
 
-    // Helper function to send photo
-    const sendPhoto = async (photoUrl: string, caption: string) => {
-      await fetch(`https://api.telegram.org/bot${botToken}/sendPhoto`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          chat_id: chatId,
-          photo: photoUrl,
-          caption: caption,
-          parse_mode: 'Markdown',
-        }),
-      });
+    // Helper to send message to current user
+    const sendUserMessage = async (text: string) => {
+      await sendMessage(chatId, text);
+    };
+
+    // Helper to notify admin
+    const notifyAdmin = async (text: string) => {
+      await sendMessage(ADMIN_CHAT_ID, text);
     };
 
     // Check subscription status
-    const checkSubscription = async (): Promise<{ isActive: boolean; expiresAt: Date | null }> => {
+    const checkSubscription = async (): Promise<{ isActive: boolean; expiresAt: Date | null; status: string }> => {
       const { data: subscriber } = await supabase
         .from('telegram_subscribers')
-        .select('subscription_expires_at')
+        .select('subscription_expires_at, is_active')
         .eq('chat_id', chatId)
         .single();
 
-      if (!subscriber?.subscription_expires_at) {
-        return { isActive: false, expiresAt: null };
+      if (!subscriber) {
+        return { isActive: false, expiresAt: null, status: 'not_registered' };
+      }
+
+      if (!subscriber.subscription_expires_at) {
+        return { isActive: false, expiresAt: null, status: 'hold' };
       }
 
       const expiresAt = new Date(subscriber.subscription_expires_at);
       const now = new Date();
-      return { isActive: expiresAt > now, expiresAt };
+      
+      if (expiresAt > now) {
+        return { isActive: true, expiresAt, status: 'active' };
+      } else {
+        // Subscription expired - update to hold status
+        await supabase
+          .from('telegram_subscribers')
+          .update({ is_active: false })
+          .eq('chat_id', chatId);
+        return { isActive: false, expiresAt, status: 'expired' };
+      }
     };
 
     if (text === '/start') {
-      // Add subscriber to database (without active subscription)
-      const { error } = await supabase
-        .from('telegram_subscribers')
-        .upsert({
-          chat_id: chatId,
-          username: username,
-          first_name: firstName,
-          is_active: true,
-          subscribed_at: new Date().toISOString(),
-        }, { onConflict: 'chat_id' });
-
-      if (error) {
-        console.error('Error saving subscriber:', error);
-      }
-
-      // Send welcome message with pricing
+      // Just show welcome message with pricing - DON'T register
       const welcomeMsg = `👋 *Welcome to SHEIN Monitor!*
 
 Get instant alerts when SHEIN India stock changes exceed your configured thresholds.
 
 ${PRICING_MESSAGE}`;
 
-      await sendMessage(welcomeMsg);
+      await sendUserMessage(welcomeMsg);
       
-      // Send QR code as a separate image
-      // Using a placeholder URL - admin should upload QR code to storage
+      // Send QR code
       try {
         const projectUrl = Deno.env.get('SUPABASE_URL')!;
-        // Try to fetch from project's public assets
         await fetch(`https://api.telegram.org/bot${botToken}/sendPhoto`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -139,10 +126,10 @@ ${PRICING_MESSAGE}`;
         });
       } catch (e) {
         console.log('Could not send QR code image:', e);
-        await sendMessage('⚠️ Please contact admin for payment QR code.');
+        await sendUserMessage('⚠️ Please contact admin for payment QR code.');
       }
 
-      console.log(`New subscriber: ${chatId} (${firstName || username || 'unknown'})`);
+      console.log(`Welcome message sent to: ${chatId} (${firstName || username || 'unknown'})`);
 
     } else if (text === '/stop') {
       // Deactivate subscriber
@@ -155,43 +142,64 @@ ${PRICING_MESSAGE}`;
         console.error('Error deactivating subscriber:', error);
       }
 
-      await sendMessage('❌ You have been unsubscribed from SHEIN Monitor alerts.\n\nSend /start to subscribe again.');
+      await sendUserMessage('❌ You have been unsubscribed from SHEIN Monitor alerts.\n\nSend /start to subscribe again.');
       console.log(`Subscriber deactivated: ${chatId}`);
 
     } else if (text === '/status') {
       const subscription = await checkSubscription();
       
       let statusMessage: string;
-      if (subscription.isActive && subscription.expiresAt) {
+      if (subscription.status === 'not_registered') {
+        statusMessage = `❌ *Not Registered*\n\nYou haven't subscribed yet. Send /start to see subscription plans.`;
+      } else if (subscription.status === 'hold') {
+        statusMessage = `⏸️ *Subscription On Hold*\n\nYour subscription is pending activation. If you've made payment, please wait for verification.`;
+      } else if (subscription.status === 'active' && subscription.expiresAt) {
         const daysLeft = Math.ceil((subscription.expiresAt.getTime() - Date.now()) / (1000 * 60 * 60 * 24));
         statusMessage = `✅ *Subscription Active*\n\n📅 Expires: ${subscription.expiresAt.toLocaleDateString()}\n⏳ Days remaining: ${daysLeft}`;
       } else {
-        statusMessage = `❌ *No Active Subscription*\n\nSend /start to see subscription plans.`;
+        statusMessage = `⏰ *Subscription Expired*\n\nYour subscription has expired. Send /start to renew.`;
       }
 
-      await sendMessage(statusMessage);
+      await sendUserMessage(statusMessage);
 
     } else if (text.toUpperCase().startsWith('UTR:') || text.toUpperCase().startsWith('UTR ')) {
       // User is submitting UTR ID
       const utrId = text.replace(/^UTR[:\s]*/i, '').trim();
 
       if (!utrId || utrId.length < 6) {
-        await sendMessage('❌ Invalid UTR ID. Please enter a valid UTR ID like:\n`UTR: 123456789012`');
+        await sendUserMessage('❌ Invalid UTR ID. Please enter a valid UTR ID like:\n`UTR: 123456789012`');
         return new Response(JSON.stringify({ ok: true }), {
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         });
       }
 
-      // Ask for plan selection
-      await sendMessage(`📝 UTR ID received: \`${utrId}\`\n\nPlease select your plan by sending:\n• \`3days\` for 3 Days (₹50)\n• \`1week\` for 1 Week (₹100)\n• \`1month\` for 1 Month (₹400)`);
+      // Register user as subscriber with hold status (is_active = false)
+      const { error: subscriberError } = await supabase
+        .from('telegram_subscribers')
+        .upsert({
+          chat_id: chatId,
+          username: username,
+          first_name: firstName,
+          is_active: false, // Hold status
+          subscribed_at: new Date().toISOString(),
+        }, { onConflict: 'chat_id' });
 
-      // Store UTR temporarily in messages for plan selection
+      if (subscriberError) {
+        console.error('Error registering subscriber:', subscriberError);
+      }
+
+      // Store UTR in messages for plan selection
       await supabase.from('telegram_messages').insert({
         chat_id: chatId,
         username: username,
         first_name: firstName,
         message_text: `UTR: ${utrId}`,
       });
+
+      // Ask for plan selection
+      await sendUserMessage(`📝 UTR ID received: \`${utrId}\`\n\nPlease select your plan by sending:\n• \`3days\` for 3 Days (₹50)\n• \`1week\` for 1 Week (₹100)\n• \`1month\` for 1 Month (₹400)`);
+
+      console.log(`UTR received from ${chatId} (${firstName || username}): ${utrId}`);
 
     } else if (['3days', '1week', '1month', '3 days', '1 week', '1 month'].includes(text.toLowerCase().replace(/\s/g, ''))) {
       // User selected a plan - find their pending UTR
@@ -207,7 +215,7 @@ ${PRICING_MESSAGE}`;
       const utrId = utrMatch?.[1];
 
       if (!utrId) {
-        await sendMessage('❌ Please first send your UTR ID like:\n`UTR: 123456789012`');
+        await sendUserMessage('❌ Please first send your UTR ID like:\n`UTR: 123456789012`');
         return new Response(JSON.stringify({ ok: true }), {
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         });
@@ -216,16 +224,20 @@ ${PRICING_MESSAGE}`;
       const normalizedPlan = text.toLowerCase().replace(/\s/g, '');
       let planType: string;
       let amount: number;
+      let planDisplay: string;
 
       if (normalizedPlan === '3days') {
         planType = '3_days';
         amount = 50;
+        planDisplay = '3 Days';
       } else if (normalizedPlan === '1week') {
         planType = '1_week';
         amount = 100;
+        planDisplay = '1 Week';
       } else {
         planType = '1_month';
         amount = 400;
+        planDisplay = '1 Month';
       }
 
       // Create subscription request
@@ -241,10 +253,15 @@ ${PRICING_MESSAGE}`;
 
       if (error) {
         console.error('Error creating subscription request:', error);
-        await sendMessage('❌ Error submitting request. Please try again.');
+        await sendUserMessage('❌ Error submitting request. Please try again.');
       } else {
-        await sendMessage(`✅ *Payment Request Submitted!*\n\n📋 Plan: ${planType.replace('_', ' ')}\n💰 Amount: ₹${amount}\n🔢 UTR: \`${utrId}\`\n\nYour subscription will be activated after verification. This usually takes a few minutes.`);
-        console.log(`Subscription request: ${chatId} - ${planType} - UTR: ${utrId}`);
+        await sendUserMessage(`✅ *Payment Request Submitted!*\n\n📋 Plan: ${planDisplay}\n💰 Amount: ₹${amount}\n🔢 UTR: \`${utrId}\`\n\nYour subscription will be activated after verification. This usually takes a few minutes.`);
+        
+        // Notify admin about new subscription request
+        const adminNotification = `🔔 *New Subscription Request!*\n\n👤 User: ${firstName || 'Unknown'} (@${username || 'no username'})\n🆔 Chat ID: \`${chatId}\`\n📋 Plan: ${planDisplay}\n💰 Amount: ₹${amount}\n🔢 UTR: \`${utrId}\`\n\nPlease verify payment and activate subscription in /telegram panel.`;
+        await notifyAdmin(adminNotification);
+        
+        console.log(`Subscription request: ${chatId} - ${planType} - UTR: ${utrId} - Admin notified`);
       }
 
     } else if (text && !text.startsWith('/')) {
