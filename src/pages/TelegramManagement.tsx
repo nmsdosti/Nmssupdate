@@ -6,11 +6,14 @@ import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useToast } from "@/hooks/use-toast";
-import { Trash2, Send, Lock, Users, MessageSquare, ArrowLeft, CreditCard, Check, X } from "lucide-react";
+import { Trash2, Send, Lock, Users, MessageSquare, ArrowLeft, CreditCard, Check, X, Settings, Loader2 } from "lucide-react";
 import { Link } from "react-router-dom";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Label } from "@/components/ui/label";
+import { Checkbox } from "@/components/ui/checkbox";
 
 const ADMIN_PASSWORD = "9898054041";
+const SESSION_KEY = "telegram_admin_session";
 
 interface Subscriber {
   id: string;
@@ -43,22 +46,73 @@ interface SubscriptionRequest {
   requested_at: string;
 }
 
+interface SubscriptionPricing {
+  price_3_days: number;
+  price_1_week: number;
+  price_1_month: number;
+}
+
 export default function TelegramManagement() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [password, setPassword] = useState("");
+  const [rememberMe, setRememberMe] = useState(false);
   const [subscribers, setSubscribers] = useState<Subscriber[]>([]);
   const [messages, setMessages] = useState<Message[]>([]);
   const [subscriptionRequests, setSubscriptionRequests] = useState<SubscriptionRequest[]>([]);
   const [broadcastMessage, setBroadcastMessage] = useState("");
   const [isSending, setIsSending] = useState(false);
-  const [activeTab, setActiveTab] = useState<"requests" | "subscribers" | "messages">("requests");
+  const [activeTab, setActiveTab] = useState<"requests" | "subscribers" | "messages" | "settings">("requests");
+  const [pricing, setPricing] = useState<SubscriptionPricing>({ price_3_days: 50, price_1_week: 100, price_1_month: 400 });
+  const [isSavingPricing, setIsSavingPricing] = useState(false);
   const { toast } = useToast();
+
+  // Check for saved session on mount
+  useEffect(() => {
+    const savedSession = localStorage.getItem(SESSION_KEY);
+    if (savedSession === "authenticated") {
+      setIsAuthenticated(true);
+    }
+  }, []);
 
   useEffect(() => {
     if (isAuthenticated) {
       loadData();
+      loadPricing();
     }
   }, [isAuthenticated]);
+
+  const loadPricing = async () => {
+    const { data } = await supabase
+      .from("subscription_pricing")
+      .select("price_3_days, price_1_week, price_1_month")
+      .eq("id", "default")
+      .single();
+    
+    if (data) {
+      setPricing(data);
+    }
+  };
+
+  const savePricing = async () => {
+    setIsSavingPricing(true);
+    const { error } = await supabase
+      .from("subscription_pricing")
+      .update({
+        price_3_days: pricing.price_3_days,
+        price_1_week: pricing.price_1_week,
+        price_1_month: pricing.price_1_month,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", "default");
+    
+    setIsSavingPricing(false);
+    
+    if (error) {
+      toast({ title: "Error saving pricing", variant: "destructive" });
+    } else {
+      toast({ title: "Pricing updated successfully" });
+    }
+  };
 
   const loadData = async () => {
     const [subsResult, msgsResult, reqsResult] = await Promise.all([
@@ -75,10 +129,19 @@ export default function TelegramManagement() {
   const handleLogin = () => {
     if (password === ADMIN_PASSWORD) {
       setIsAuthenticated(true);
+      if (rememberMe) {
+        localStorage.setItem(SESSION_KEY, "authenticated");
+      }
       toast({ title: "Access granted" });
     } else {
       toast({ title: "Invalid password", variant: "destructive" });
     }
+  };
+
+  const handleLogout = () => {
+    setIsAuthenticated(false);
+    localStorage.removeItem(SESSION_KEY);
+    toast({ title: "Logged out" });
   };
 
   const deleteSubscriber = async (id: string) => {
@@ -287,6 +350,16 @@ export default function TelegramManagement() {
               onChange={(e) => setPassword(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && handleLogin()}
             />
+            <div className="flex items-center space-x-2">
+              <Checkbox 
+                id="remember" 
+                checked={rememberMe}
+                onCheckedChange={(checked) => setRememberMe(checked === true)}
+              />
+              <Label htmlFor="remember" className="text-sm text-muted-foreground cursor-pointer">
+                Remember me
+              </Label>
+            </div>
             <Button onClick={handleLogin} className="w-full">
               Login
             </Button>
@@ -306,11 +379,16 @@ export default function TelegramManagement() {
       <div className="max-w-6xl mx-auto space-y-6">
         <div className="flex items-center justify-between">
           <h1 className="text-2xl font-bold">Telegram Management</h1>
-          <Link to="/">
-            <Button variant="outline">
-              <ArrowLeft className="w-4 h-4 mr-2" /> Back to Monitor
+          <div className="flex gap-2">
+            <Button variant="outline" onClick={handleLogout}>
+              Logout
             </Button>
-          </Link>
+            <Link to="/">
+              <Button variant="outline">
+                <ArrowLeft className="w-4 h-4 mr-2" /> Back to Monitor
+              </Button>
+            </Link>
+          </div>
         </div>
 
         {/* Broadcast Section */}
@@ -352,6 +430,12 @@ export default function TelegramManagement() {
             onClick={() => setActiveTab("messages")}
           >
             <MessageSquare className="w-4 h-4 mr-2" /> Messages ({messages.length})
+          </Button>
+          <Button
+            variant={activeTab === "settings" ? "default" : "outline"}
+            onClick={() => setActiveTab("settings")}
+          >
+            <Settings className="w-4 h-4 mr-2" /> Settings
           </Button>
         </div>
 
@@ -553,6 +637,61 @@ export default function TelegramManagement() {
                   )}
                 </TableBody>
               </Table>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Settings Tab */}
+        {activeTab === "settings" && (
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Settings className="w-5 h-5" /> Subscription Pricing
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-6">
+              <div className="grid gap-4 sm:grid-cols-3">
+                <div className="space-y-2">
+                  <Label htmlFor="price_3_days">3 Days (₹)</Label>
+                  <Input
+                    id="price_3_days"
+                    type="number"
+                    value={pricing.price_3_days}
+                    onChange={(e) => setPricing({ ...pricing, price_3_days: parseInt(e.target.value) || 0 })}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="price_1_week">1 Week (₹)</Label>
+                  <Input
+                    id="price_1_week"
+                    type="number"
+                    value={pricing.price_1_week}
+                    onChange={(e) => setPricing({ ...pricing, price_1_week: parseInt(e.target.value) || 0 })}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="price_1_month">1 Month (₹)</Label>
+                  <Input
+                    id="price_1_month"
+                    type="number"
+                    value={pricing.price_1_month}
+                    onChange={(e) => setPricing({ ...pricing, price_1_month: parseInt(e.target.value) || 0 })}
+                  />
+                </div>
+              </div>
+              <Button onClick={savePricing} disabled={isSavingPricing}>
+                {isSavingPricing ? (
+                  <>
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    Saving...
+                  </>
+                ) : (
+                  "Save Pricing"
+                )}
+              </Button>
+              <p className="text-sm text-muted-foreground">
+                These prices will be shown to users when they subscribe via Telegram bot.
+              </p>
             </CardContent>
           </Card>
         )}
