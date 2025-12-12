@@ -92,7 +92,7 @@ serve(async (req) => {
     // Get settings from database
     const { data: settings } = await supabase
       .from('monitor_settings')
-      .select('threshold, jump_threshold, is_paused, last_api_key_alert_at, interval_minutes')
+      .select('threshold, jump_threshold, is_paused, last_api_key_alert_at, interval_seconds')
       .eq('id', 'default')
       .single();
     
@@ -108,8 +108,8 @@ serve(async (req) => {
       });
     }
     
-    // Check if enough time has passed since last check (interval logic)
-    const intervalMinutes = settings?.interval_minutes ?? 1;
+    // Check if enough time has passed since last check (interval logic in seconds)
+    const intervalSeconds = settings?.interval_seconds ?? 30;
     const { data: lastHistory } = await supabase
       .from('monitor_history')
       .select('created_at')
@@ -120,21 +120,21 @@ serve(async (req) => {
     if (lastHistory?.created_at) {
       const lastCheckTime = new Date(lastHistory.created_at);
       const now = new Date();
-      const minutesSinceLastCheck = (now.getTime() - lastCheckTime.getTime()) / (1000 * 60);
+      const secondsSinceLastCheck = (now.getTime() - lastCheckTime.getTime()) / 1000;
       
-      if (minutesSinceLastCheck < intervalMinutes) {
-        console.log(`Skipping check - only ${minutesSinceLastCheck.toFixed(1)} mins since last check (interval: ${intervalMinutes} mins)`);
+      if (secondsSinceLastCheck < intervalSeconds) {
+        console.log(`Skipping check - only ${secondsSinceLastCheck.toFixed(1)}s since last check (interval: ${intervalSeconds}s)`);
         return new Response(JSON.stringify({ 
           success: true, 
           skipped: true,
-          message: `Waiting for interval (${minutesSinceLastCheck.toFixed(1)}/${intervalMinutes} mins)`
+          message: `Waiting for interval (${secondsSinceLastCheck.toFixed(1)}/${intervalSeconds}s)`
         }), {
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         });
       }
     }
     
-    console.log(`Interval check passed (${intervalMinutes} mins). Running monitor...`);
+    console.log(`Interval check passed (${intervalSeconds}s). Running monitor...`);
     
     const threshold = typeof body.threshold === 'number' ? body.threshold : (settings?.threshold ?? 1000);
     const jumpThreshold = settings?.jump_threshold ?? 100;
