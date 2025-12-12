@@ -276,7 +276,7 @@ serve(async (req) => {
       .select('*')
       .eq('is_active', true);
     
-    const categoryAlerts: { name: string; count: number; threshold: number }[] = [];
+    const categoryAlerts: { name: string; count: number; threshold: number; url: string }[] = [];
     const subtractedCategories: { name: string; count: number }[] = [];
     let totalSubtraction = 0;
     
@@ -335,6 +335,7 @@ serve(async (req) => {
               name: cat.name,
               count: catResult.itemCount,
               threshold: cat.threshold,
+              url: cat.url,
             });
           }
         } else {
@@ -406,7 +407,8 @@ serve(async (req) => {
           if (hasCategoryAlerts) {
             messageParts.push('\n\n📁 Category Alerts:');
             for (const alert of categoryAlerts) {
-              messageParts.push(`• ${alert.name}: ${alert.count} items (limit: ${alert.threshold})`);
+              messageParts.push(`• ${alert.name}: ${alert.count.toLocaleString()} items (limit: ${alert.threshold})`);
+              messageParts.push(`  🔗 ${alert.url}`);
             }
           }
           
