@@ -4,9 +4,13 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Loader2, RefreshCw, Bell, BellOff, TrendingUp, Clock, ExternalLink, Settings, Timer, Plus, Trash2, Layers, Minus, Pause, Play } from "lucide-react";
+import { Loader2, RefreshCw, Bell, BellOff, TrendingUp, Clock, ExternalLink, Settings, Timer, Plus, Trash2, Layers, Minus, Pause, Play, Lock } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
+import { Checkbox } from "@/components/ui/checkbox";
+
+const ADMIN_PASSWORD = "9898054041";
+const SESSION_KEY = "monitor_admin_session";
 
 interface MonitorResult {
   success: boolean;
@@ -49,6 +53,10 @@ interface FirecrawlApiKey {
 }
 
 const Index = () => {
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [password, setPassword] = useState("");
+  const [rememberMe, setRememberMe] = useState(false);
+  
   const [isLoading, setIsLoading] = useState(false);
   const [result, setResult] = useState<MonitorResult | null>(null);
   const [history, setHistory] = useState<HistoryItem[]>([]);
@@ -80,8 +88,31 @@ const Index = () => {
   
   const { toast } = useToast();
 
-  // Load threshold and history from database on mount
+  // Check for saved session on mount
   useEffect(() => {
+    const savedSession = localStorage.getItem(SESSION_KEY);
+    if (savedSession === "authenticated") {
+      setIsAuthenticated(true);
+    }
+  }, []);
+
+  const handleLogin = () => {
+    if (password === ADMIN_PASSWORD) {
+      setIsAuthenticated(true);
+      if (rememberMe) {
+        localStorage.setItem(SESSION_KEY, "authenticated");
+      }
+      toast({ title: "Access granted" });
+    } else {
+      toast({ title: "Invalid password", variant: "destructive" });
+    }
+  };
+
+
+  // Load data when authenticated
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    
     const loadData = async () => {
       // Load threshold
       const { data: settings } = await supabase
@@ -145,7 +176,7 @@ const Index = () => {
       }
     };
     loadData();
-  }, []);
+  }, [isAuthenticated]);
 
   const checkMonitor = async () => {
     setIsLoading(true);
@@ -347,6 +378,46 @@ const Index = () => {
       description: `${validKeys.length} Firecrawl API key(s) added`,
     });
   };
+
+  // Login screen
+  if (!isAuthenticated) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 flex items-center justify-center p-4">
+        <Card className="w-full max-w-md bg-slate-900/50 border-slate-800/50 backdrop-blur-sm">
+          <CardHeader className="text-center">
+            <div className="w-16 h-16 rounded-xl bg-gradient-to-br from-emerald-500 to-cyan-500 flex items-center justify-center mx-auto mb-4">
+              <Lock className="w-8 h-8 text-white" />
+            </div>
+            <CardTitle className="text-white text-xl">SHEIN Monitor</CardTitle>
+            <CardDescription className="text-slate-400">Enter password to access the dashboard</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <Input
+              type="password"
+              placeholder="Enter password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && handleLogin()}
+              className="bg-slate-900/50 border-slate-700 text-white placeholder:text-slate-500"
+            />
+            <div className="flex items-center space-x-2">
+              <Checkbox 
+                id="remember" 
+                checked={rememberMe}
+                onCheckedChange={(checked) => setRememberMe(checked === true)}
+              />
+              <Label htmlFor="remember" className="text-sm text-slate-400 cursor-pointer">
+                Remember me
+              </Label>
+            </div>
+            <Button onClick={handleLogin} className="w-full bg-emerald-600 hover:bg-emerald-500 text-white">
+              Login
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950">

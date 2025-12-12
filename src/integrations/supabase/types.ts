@@ -149,6 +149,30 @@ export type Database = {
         }
         Relationships: []
       }
+      subscription_pricing: {
+        Row: {
+          id: string
+          price_1_month: number
+          price_1_week: number
+          price_3_days: number
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          price_1_month?: number
+          price_1_week?: number
+          price_3_days?: number
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          price_1_month?: number
+          price_1_week?: number
+          price_3_days?: number
+          updated_at?: string
+        }
+        Relationships: []
+      }
       telegram_messages: {
         Row: {
           chat_id: string

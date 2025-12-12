@@ -8,20 +8,6 @@ const corsHeaders = {
 
 const ADMIN_CHAT_ID = '801475049';
 
-const PRICING_MESSAGE = `💰 *SHEIN Monitor Subscription Plans*
-
-📦 *3 Days* - ₹50
-📦 *1 Week* - ₹100  
-📦 *1 Month* - ₹400
-
-To subscribe:
-1️⃣ Scan the QR code below and pay
-2️⃣ After payment, send your UTR ID like this:
-   \`UTR: 123456789012\`
-3️⃣ Then select your plan
-
-Your subscription will be activated after verification!`;
-
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
@@ -31,6 +17,29 @@ serve(async (req) => {
   const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
   const supabase = createClient(supabaseUrl, supabaseKey);
   const botToken = Deno.env.get('TELEGRAM_BOT_TOKEN')!;
+
+  // Get dynamic pricing from database
+  const getPricing = async () => {
+    const { data } = await supabase
+      .from('subscription_pricing')
+      .select('price_3_days, price_1_week, price_1_month')
+      .eq('id', 'default')
+      .single();
+    
+    return data || { price_3_days: 50, price_1_week: 100, price_1_month: 400 };
+  };
+
+  // Get the dashboard URL
+  const getDashboardUrl = () => {
+    // Use the Supabase URL to construct the app URL
+    const supabaseProjectUrl = supabaseUrl.replace('supabase.co', 'lovable.app').replace('.co', '.app');
+    // Extract project ID from URL
+    const projectId = supabaseUrl.match(/https:\/\/([^.]+)/)?.[1];
+    if (projectId) {
+      return `https://${projectId}.lovableproject.com/dashboard`;
+    }
+    return '/dashboard';
+  };
 
   try {
     const update = await req.json();
@@ -103,6 +112,27 @@ serve(async (req) => {
     };
 
     if (text === '/start') {
+      // Get dynamic pricing
+      const pricing = await getPricing();
+      const dashboardUrl = getDashboardUrl();
+      
+      const PRICING_MESSAGE = `💰 *SHEIN Monitor Subscription Plans*
+
+📦 *3 Days* - ₹${pricing.price_3_days}
+📦 *1 Week* - ₹${pricing.price_1_week}  
+📦 *1 Month* - ₹${pricing.price_1_month}
+
+To subscribe:
+1️⃣ Scan the QR code below and pay
+2️⃣ After payment, send your UTR ID like this:
+   \`UTR: 123456789012\`
+3️⃣ Then select your plan
+
+Your subscription will be activated after verification!
+
+📊 *View Live Stock Dashboard:*
+${dashboardUrl}`;
+
       // Just show welcome message with pricing - DON'T register
       const welcomeMsg = `👋 *Welcome to SHEIN Monitor!*
 
@@ -147,6 +177,7 @@ ${PRICING_MESSAGE}`;
 
     } else if (text === '/status') {
       const subscription = await checkSubscription();
+      const dashboardUrl = getDashboardUrl();
       
       let statusMessage: string;
       if (subscription.status === 'not_registered') {
@@ -155,12 +186,16 @@ ${PRICING_MESSAGE}`;
         statusMessage = `⏸️ *Subscription On Hold*\n\nYour subscription is pending activation. If you've made payment, please wait for verification.`;
       } else if (subscription.status === 'active' && subscription.expiresAt) {
         const daysLeft = Math.ceil((subscription.expiresAt.getTime() - Date.now()) / (1000 * 60 * 60 * 24));
-        statusMessage = `✅ *Subscription Active*\n\n📅 Expires: ${subscription.expiresAt.toLocaleDateString()}\n⏳ Days remaining: ${daysLeft}`;
+        statusMessage = `✅ *Subscription Active*\n\n📅 Expires: ${subscription.expiresAt.toLocaleDateString()}\n⏳ Days remaining: ${daysLeft}\n\n📊 View Dashboard: ${dashboardUrl}`;
       } else {
         statusMessage = `⏰ *Subscription Expired*\n\nYour subscription has expired. Send /start to renew.`;
       }
 
       await sendUserMessage(statusMessage);
+
+    } else if (text === '/dashboard') {
+      const dashboardUrl = getDashboardUrl();
+      await sendUserMessage(`📊 *SHEIN Stock Dashboard*\n\nView live stock counts and category breakdown:\n${dashboardUrl}`);
 
     } else if (text.toUpperCase().startsWith('UTR:') || text.toUpperCase().startsWith('UTR ')) {
       // User is submitting UTR ID
@@ -196,8 +231,11 @@ ${PRICING_MESSAGE}`;
         message_text: `UTR: ${utrId}`,
       });
 
+      // Get pricing for plan selection message
+      const pricing = await getPricing();
+
       // Ask for plan selection
-      await sendUserMessage(`📝 UTR ID received: \`${utrId}\`\n\nPlease select your plan by sending:\n1️⃣ for 3 Days (₹50)\n2️⃣ for 1 Week (₹100)\n3️⃣ for 1 Month (₹400)`);
+      await sendUserMessage(`📝 UTR ID received: \`${utrId}\`\n\nPlease select your plan by sending:\n1️⃣ for 3 Days (₹${pricing.price_3_days})\n2️⃣ for 1 Week (₹${pricing.price_1_week})\n3️⃣ for 1 Month (₹${pricing.price_1_month})`);
 
       console.log(`UTR received from ${chatId} (${firstName || username}): ${utrId}`);
 
@@ -221,6 +259,9 @@ ${PRICING_MESSAGE}`;
         });
       }
 
+      // Get pricing
+      const pricing = await getPricing();
+      
       const normalizedPlan = text.toLowerCase().replace(/\s/g, '');
       let planType: string;
       let amount: number;
@@ -228,15 +269,15 @@ ${PRICING_MESSAGE}`;
 
       if (normalizedPlan === '1' || normalizedPlan === '3days') {
         planType = '3_days';
-        amount = 50;
+        amount = pricing.price_3_days;
         planDisplay = '3 Days';
       } else if (normalizedPlan === '2' || normalizedPlan === '1week') {
         planType = '1_week';
-        amount = 100;
+        amount = pricing.price_1_week;
         planDisplay = '1 Week';
       } else {
         planType = '1_month';
-        amount = 400;
+        amount = pricing.price_1_month;
         planDisplay = '1 Month';
       }
 
