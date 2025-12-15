@@ -16,50 +16,46 @@ interface CategoryMonitor {
   subtract_from_total: boolean;
 }
 
+interface ApiKey {
+  id: string;
+  api_key: string;
+  label: string | null;
+  is_active: boolean;
+  last_error: string | null;
+}
 
-async function scrapeItemCount(url: string, _unused?: string): Promise<{ success: boolean; itemCount?: number; error?: string; isApiKeyError?: boolean }> {
-  const rapidApiKey = Deno.env.get('RAPIDAPI_KEY');
-  
-  if (!rapidApiKey) {
-    return { success: false, error: 'RAPIDAPI_KEY not configured', isApiKeyError: true };
-  }
-  
+async function scrapeItemCount(url: string, firecrawlApiKey: string): Promise<{ success: boolean; itemCount?: number; error?: string; isApiKeyError?: boolean }> {
   try {
-    // Add cache-busting parameter
-    const scrapedUrl = `${url}${url.includes('?') ? '&' : '?'}_nocache=${Date.now()}`;
-    
-    console.log('Scraping URL:', scrapedUrl);
-    
-    // Try JSON format for RapidAPI
-    const scrapeResponse = await fetch('https://ai-web-scraper.p.rapidapi.com/extract_content/v1', {
+    const scrapeResponse = await fetch('https://api.firecrawl.dev/v1/scrape', {
       method: 'POST',
       headers: {
+        'Authorization': `Bearer ${firecrawlApiKey}`,
         'Content-Type': 'application/json',
-        'x-rapidapi-host': 'ai-web-scraper.p.rapidapi.com',
-        'x-rapidapi-key': rapidApiKey,
       },
       body: JSON.stringify({
-        url: scrapedUrl,
-        render_js: true,
+        url: `${url}${url.includes('?') ? '&' : '?'}_nocache=${Date.now()}`,
+        formats: ['html'],
+        waitFor: 5000,
       }),
     });
 
-    console.log('RapidAPI response status:', scrapeResponse.status);
-
-    if (!scrapeResponse.ok) {
-      const errorText = await scrapeResponse.text();
-      console.log('RapidAPI error response:', errorText);
-      const isApiKeyError = scrapeResponse.status === 401 || 
-                           scrapeResponse.status === 403 ||
-                           scrapeResponse.status === 429;
-      return { success: false, error: `HTTP ${scrapeResponse.status}: ${errorText}`, isApiKeyError };
+    const scrapeData = await scrapeResponse.json();
+    
+    if (!scrapeResponse.ok || !scrapeData.success) {
+      const errorMessage = scrapeData.error || `HTTP ${scrapeResponse.status}`;
+      const isApiKeyError = errorMessage.toLowerCase().includes('quota') ||
+                           errorMessage.toLowerCase().includes('credit') ||
+                           errorMessage.toLowerCase().includes('limit') ||
+                           errorMessage.toLowerCase().includes('unauthorized') ||
+                           errorMessage.toLowerCase().includes('invalid') ||
+                           errorMessage.toLowerCase().includes('expired') ||
+                           scrapeResponse.status === 401 ||
+                           scrapeResponse.status === 402 ||
+                           scrapeResponse.status === 403;
+      return { success: false, error: errorMessage, isApiKeyError };
     }
 
-    const scrapeData = await scrapeResponse.json();
-    console.log('RapidAPI response keys:', Object.keys(scrapeData));
-    
-    // RapidAPI returns content in different format - check for html/text content
-    const html = scrapeData.html || scrapeData.content || scrapeData.text || scrapeData.body || JSON.stringify(scrapeData);
+    const html = scrapeData.data?.html || '';
     
     const patterns = [
       /aria-label="([\d,]+)\s*Items?\s*Found"/i,
@@ -71,15 +67,12 @@ async function scrapeItemCount(url: string, _unused?: string): Promise<{ success
       const match = html.match(pattern);
       if (match && match[1]) {
         const itemCount = parseInt(match[1].replace(/,/g, ''), 10);
-        console.log('Found item count:', itemCount);
         return { success: true, itemCount };
       }
     }
 
-    console.log('Could not find item count in response, first 500 chars:', html.substring(0, 500));
-    return { success: false, error: 'Could not extract item count from response' };
+    return { success: false, error: 'Could not extract item count' };
   } catch (error) {
-    console.error('Scrape error:', error);
     return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
   }
 }
@@ -149,39 +142,78 @@ serve(async (req) => {
     console.log('Loaded threshold from database:', threshold);
     console.log('Jump threshold:', jumpThreshold);
     
-    // Check if RapidAPI key is configured
-    const rapidApiKey = Deno.env.get('RAPIDAPI_KEY');
-    if (!rapidApiKey) {
+    // Get all active API keys ordered by created_at
+    const { data: apiKeys } = await supabase
+      .from('firecrawl_api_keys')
+      .select('id, api_key, label, is_active, last_error')
+      .eq('is_active', true)
+      .order('created_at', { ascending: true });
+    
+    if (!apiKeys || apiKeys.length === 0) {
       return new Response(JSON.stringify({ 
         success: false, 
-        error: 'RapidAPI key not configured. Please add RAPIDAPI_KEY in secrets.'
+        error: 'No Firecrawl API keys configured. Please add at least one in Settings.'
       }), {
         status: 400,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
     
-    console.log('RapidAPI key configured');
+    console.log(`Found ${apiKeys.length} active API keys`);
     
     const targetUrl = 'https://www.sheinindia.in/c/sverse-5939-37961';
 
-    console.log('Scraping with RapidAPI:', targetUrl);
+    console.log('Scraping with Firecrawl:', targetUrl);
     console.log('Using threshold:', threshold);
 
-    // Scrape main URL with RapidAPI
-    const mainResult = await scrapeItemCount(targetUrl);
+    // Try to scrape main URL with API key rotation
+    let mainResult: { success: boolean; itemCount?: number; error?: string; usedKeyId?: string; allKeysFailed?: boolean } = {
+      success: false,
+      error: 'No API keys available',
+      allKeysFailed: true,
+    };
+    
+    for (const key of apiKeys as ApiKey[]) {
+      console.log(`Trying API key: ${key.label || key.id.slice(0, 8)}...`);
+      
+      const result = await scrapeItemCount(targetUrl, key.api_key);
+      
+      // Update last_used_at
+      await supabase
+        .from('firecrawl_api_keys')
+        .update({ 
+          last_used_at: new Date().toISOString(), 
+          last_error: result.success ? null : (result.error || null)
+        })
+        .eq('id', key.id);
+      
+      if (result.success) {
+        mainResult = { success: true, itemCount: result.itemCount, usedKeyId: key.id, allKeysFailed: false };
+        break;
+      }
+      
+      // If it's an API key error, mark and try next key
+      if (result.isApiKeyError) {
+        console.log(`API key ${key.label || key.id.slice(0, 8)} failed: ${result.error}`);
+        continue;
+      }
+      
+      // For non-API key errors, return the error
+      mainResult = { success: false, error: result.error, usedKeyId: key.id, allKeysFailed: false };
+      break;
+    }
     
     if (!mainResult.success) {
       console.error('Main scrape failed:', mainResult.error);
       
-      // If API key error, send notification (rate limited to once per hour)
-      if (mainResult.isApiKeyError) {
+      // If all keys failed, send notification (rate limited to once per hour)
+      if (mainResult.allKeysFailed) {
         const now = new Date();
         const oneHourAgo = new Date(now.getTime() - 60 * 60 * 1000);
         const shouldSendAlert = !lastApiKeyAlertAt || lastApiKeyAlertAt < oneHourAgo;
         
         if (shouldSendAlert) {
-          console.log('Sending API key error notification (rate limit: once per hour)');
+          console.log('Sending API key exhausted notification (rate limit: once per hour)');
           const botToken = Deno.env.get('TELEGRAM_BOT_TOKEN');
           if (botToken) {
             const { data: subscribers } = await supabase
@@ -190,7 +222,7 @@ serve(async (req) => {
               .eq('is_active', true);
             
             if (subscribers && subscribers.length > 0) {
-              const alertMessage = `⚠️ RapidAPI Scraper Error!\n\n${mainResult.error}\n\nPlease check your RapidAPI key or subscription.\n\n(This alert is sent once per hour)`;
+              const alertMessage = `⚠️ All Firecrawl API Keys Exhausted!\n\nAll ${apiKeys.length} configured API keys have failed or run out of credits.\n\nPlease add new API keys or replenish existing ones in Settings.\n\n(This alert is sent once per hour)`;
               
               for (const sub of subscribers) {
                 try {
@@ -254,8 +286,32 @@ serve(async (req) => {
       for (const cat of categoryMonitors as CategoryMonitor[]) {
         console.log(`Checking category: ${cat.name} (${cat.url})`);
         
-        // Scrape category with RapidAPI
-        const catResult = await scrapeItemCount(cat.url);
+        // Try each API key for this category
+        let catResult: { success: boolean; itemCount?: number; error?: string } = { success: false, error: 'No keys' };
+        
+        for (const key of apiKeys as ApiKey[]) {
+          const result = await scrapeItemCount(cat.url, key.api_key);
+          
+          await supabase
+            .from('firecrawl_api_keys')
+            .update({ 
+              last_used_at: new Date().toISOString(), 
+              last_error: result.success ? null : (result.error || null)
+            })
+            .eq('id', key.id);
+          
+          if (result.success) {
+            catResult = result;
+            break;
+          }
+          
+          if (result.isApiKeyError) {
+            continue;
+          }
+          
+          catResult = result;
+          break;
+        }
         
         if (catResult.success && catResult.itemCount !== undefined) {
           console.log(`Category ${cat.name}: ${catResult.itemCount} items (threshold: ${cat.threshold})`);
