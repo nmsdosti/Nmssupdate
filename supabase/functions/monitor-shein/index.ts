@@ -28,23 +28,27 @@ async function scrapeItemCount(url: string, _unused?: string): Promise<{ success
     // Add cache-busting parameter
     const scrapedUrl = `${url}${url.includes('?') ? '&' : '?'}_nocache=${Date.now()}`;
     
-    const formData = new URLSearchParams();
-    formData.append('url', scrapedUrl);
-    formData.append('render_js', 'true');
-    formData.append('wait_for_selector', '.she-length-in-header');
+    console.log('Scraping URL:', scrapedUrl);
     
+    // Try JSON format for RapidAPI
     const scrapeResponse = await fetch('https://ai-web-scraper.p.rapidapi.com/extract_content/v1', {
       method: 'POST',
       headers: {
-        'Content-Type': 'application/x-www-form-urlencoded',
+        'Content-Type': 'application/json',
         'x-rapidapi-host': 'ai-web-scraper.p.rapidapi.com',
         'x-rapidapi-key': rapidApiKey,
       },
-      body: formData.toString(),
+      body: JSON.stringify({
+        url: scrapedUrl,
+        render_js: true,
+      }),
     });
+
+    console.log('RapidAPI response status:', scrapeResponse.status);
 
     if (!scrapeResponse.ok) {
       const errorText = await scrapeResponse.text();
+      console.log('RapidAPI error response:', errorText);
       const isApiKeyError = scrapeResponse.status === 401 || 
                            scrapeResponse.status === 403 ||
                            scrapeResponse.status === 429;
@@ -52,9 +56,10 @@ async function scrapeItemCount(url: string, _unused?: string): Promise<{ success
     }
 
     const scrapeData = await scrapeResponse.json();
+    console.log('RapidAPI response keys:', Object.keys(scrapeData));
     
     // RapidAPI returns content in different format - check for html/text content
-    const html = scrapeData.html || scrapeData.content || scrapeData.text || JSON.stringify(scrapeData);
+    const html = scrapeData.html || scrapeData.content || scrapeData.text || scrapeData.body || JSON.stringify(scrapeData);
     
     const patterns = [
       /aria-label="([\d,]+)\s*Items?\s*Found"/i,
@@ -66,12 +71,15 @@ async function scrapeItemCount(url: string, _unused?: string): Promise<{ success
       const match = html.match(pattern);
       if (match && match[1]) {
         const itemCount = parseInt(match[1].replace(/,/g, ''), 10);
+        console.log('Found item count:', itemCount);
         return { success: true, itemCount };
       }
     }
 
+    console.log('Could not find item count in response, first 500 chars:', html.substring(0, 500));
     return { success: false, error: 'Could not extract item count from response' };
   } catch (error) {
+    console.error('Scrape error:', error);
     return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
   }
 }
