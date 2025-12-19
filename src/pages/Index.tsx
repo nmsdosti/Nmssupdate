@@ -379,6 +379,100 @@ const Index = () => {
     });
   };
 
+  // Google Sheets sync
+  const [sheetUrl, setSheetUrl] = useState("https://docs.google.com/spreadsheets/d/1e1O0wneRwUwsjvaHuCklRGh4aJm4oCnZuzeRO-2gqBw/export?format=csv");
+  const [isSyncing, setIsSyncing] = useState(false);
+
+  const syncFromGoogleSheets = async () => {
+    if (!sheetUrl.trim()) {
+      toast({
+        title: "Missing URL",
+        description: "Please enter a Google Sheets CSV URL",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setIsSyncing(true);
+    try {
+      const response = await fetch(sheetUrl);
+      if (!response.ok) {
+        throw new Error("Failed to fetch sheet. Make sure it's published to web as CSV.");
+      }
+      
+      const csvText = await response.text();
+      const lines = csvText.split('\n').map(line => line.trim()).filter(line => line.length > 0);
+      
+      // Extract API keys (first column, skip header if it looks like one)
+      const keys: string[] = [];
+      for (const line of lines) {
+        const firstCol = line.split(',')[0].trim().replace(/^"|"$/g, '');
+        // Skip if it looks like a header or empty
+        if (firstCol && firstCol.toLowerCase() !== 'api_key' && firstCol.toLowerCase() !== 'key' && firstCol.startsWith('fc-')) {
+          keys.push(firstCol);
+        }
+      }
+
+      if (keys.length === 0) {
+        toast({
+          title: "No Keys Found",
+          description: "No valid API keys (starting with fc-) found in the sheet",
+          variant: "destructive",
+        });
+        setIsSyncing(false);
+        return;
+      }
+
+      // Get existing keys to avoid duplicates
+      const existingKeys = new Set(apiKeys.map(k => k.api_key));
+      const newKeys = keys.filter(k => !existingKeys.has(k));
+
+      if (newKeys.length === 0) {
+        toast({
+          title: "No New Keys",
+          description: "All keys from the sheet already exist",
+        });
+        setIsSyncing(false);
+        return;
+      }
+
+      // Insert new keys
+      const keysToInsert = newKeys.map((key, index) => ({
+        api_key: key,
+        label: `Sheet ${apiKeys.length + index + 1}`,
+      }));
+
+      const { error } = await supabase
+        .from('firecrawl_api_keys')
+        .insert(keysToInsert);
+
+      if (error) throw error;
+
+      // Reload API keys
+      const { data } = await supabase
+        .from('firecrawl_api_keys')
+        .select('*')
+        .order('created_at', { ascending: true });
+
+      if (data) {
+        setApiKeys(data);
+      }
+
+      toast({
+        title: "Sync Complete",
+        description: `Added ${newKeys.length} new API keys from Google Sheets`,
+      });
+    } catch (error) {
+      console.error('Sync error:', error);
+      toast({
+        title: "Sync Failed",
+        description: error instanceof Error ? error.message : "Failed to sync from Google Sheets",
+        variant: "destructive",
+      });
+    }
+    setIsSyncing(false);
+  };
+
   // Login screen
   if (!isAuthenticated) {
     return (
@@ -686,9 +780,35 @@ const Index = () => {
                   
                   {showApiKeys && (
                     <div className="space-y-4">
+                      {/* Google Sheets Sync */}
+                      <div className="bg-gradient-to-r from-green-900/30 to-emerald-900/20 p-3 rounded-lg border border-green-700/30">
+                        <p className="text-xs text-green-300 mb-2 font-medium">📊 Sync from Google Sheets</p>
+                        <p className="text-xs text-slate-400 mb-3">Add your keys to a Google Sheet, publish as CSV, then sync. Keys must start with "fc-".</p>
+                        <div className="space-y-2">
+                          <Input
+                            type="url"
+                            value={sheetUrl}
+                            onChange={(e) => setSheetUrl(e.target.value)}
+                            placeholder="Google Sheets CSV URL"
+                            className="bg-slate-900/50 border-slate-700 text-white placeholder:text-slate-500 text-xs"
+                          />
+                          <Button
+                            onClick={syncFromGoogleSheets}
+                            disabled={isSyncing}
+                            className="bg-green-600 hover:bg-green-500 text-white w-full"
+                          >
+                            {isSyncing ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <RefreshCw className="w-4 h-4 mr-2" />}
+                            Sync Keys from Sheet
+                          </Button>
+                        </div>
+                        <p className="text-xs text-slate-500 mt-2">
+                          Your sheet: <a href="https://docs.google.com/spreadsheets/d/1e1O0wneRwUwsjvaHuCklRGh4aJm4oCnZuzeRO-2gqBw" target="_blank" rel="noopener noreferrer" className="text-green-400 hover:underline">Open Sheet</a>
+                        </p>
+                      </div>
+
                       {/* Bulk add API keys (5 at a time) */}
                       <div className="bg-slate-800/30 p-3 rounded-lg border border-slate-700/30">
-                        <p className="text-xs text-slate-400 mb-3">Add up to 5 API keys at once (max 50 total). Keys are used in order, rotating on failure.</p>
+                        <p className="text-xs text-slate-400 mb-3">Or add up to 5 API keys manually. Keys are used in order, rotating on failure.</p>
                         <div className="space-y-2">
                           {bulkApiKeys.map((key, index) => (
                             <Input
@@ -706,7 +826,7 @@ const Index = () => {
                           ))}
                           <Button
                             onClick={addBulkApiKeys}
-                            disabled={isAddingApiKey || apiKeys.length >= 50}
+                            disabled={isAddingApiKey}
                             className="bg-emerald-600 hover:bg-emerald-500 text-white w-full"
                           >
                             {isAddingApiKey ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Plus className="w-4 h-4 mr-2" />}
