@@ -275,15 +275,6 @@ const Index = () => {
       return;
     }
     
-    if (apiKeys.length >= 50) {
-      toast({
-        title: "Limit Reached",
-        description: "Maximum 50 API keys allowed",
-        variant: "destructive",
-      });
-      return;
-    }
-    
     setIsAddingApiKey(true);
     const { error } = await supabase
       .from('firecrawl_api_keys')
@@ -327,15 +318,6 @@ const Index = () => {
       toast({
         title: "No Keys",
         description: "Please enter at least one API key",
-        variant: "destructive",
-      });
-      return;
-    }
-    
-    if (apiKeys.length + validKeys.length > 50) {
-      toast({
-        title: "Limit Exceeded",
-        description: `Can only add ${50 - apiKeys.length} more keys (max 50)`,
         variant: "destructive",
       });
       return;
@@ -859,7 +841,7 @@ const Index = () => {
                             />
                             <Button
                               onClick={addApiKey}
-                              disabled={isAddingApiKey || apiKeys.length >= 50}
+                              disabled={isAddingApiKey}
                               className="bg-cyan-600 hover:bg-cyan-500 text-white"
                             >
                               {isAddingApiKey ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
