@@ -149,41 +149,6 @@ export type Database = {
         }
         Relationships: []
       }
-      monitored_products: {
-        Row: {
-          category_id: string | null
-          created_at: string
-          first_seen_at: string
-          id: string
-          notified: boolean
-          product_url: string
-        }
-        Insert: {
-          category_id?: string | null
-          created_at?: string
-          first_seen_at?: string
-          id?: string
-          notified?: boolean
-          product_url: string
-        }
-        Update: {
-          category_id?: string | null
-          created_at?: string
-          first_seen_at?: string
-          id?: string
-          notified?: boolean
-          product_url?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "monitored_products_category_id_fkey"
-            columns: ["category_id"]
-            isOneToOne: false
-            referencedRelation: "category_monitors"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
       subscription_pricing: {
         Row: {
           id: string
