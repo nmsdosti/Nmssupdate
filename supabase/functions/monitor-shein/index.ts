@@ -35,7 +35,8 @@ async function scrapeItemCount(url: string, firecrawlApiKey: string): Promise<{ 
       body: JSON.stringify({
         url: `${url}${url.includes('?') ? '&' : '?'}_nocache=${Date.now()}`,
         formats: ['html'],
-        waitFor: 5000,
+        waitFor: 2000,
+        timeout: 15000,
       }),
     });
 
@@ -281,24 +282,32 @@ serve(async (req) => {
     let totalSubtraction = 0;
     
     if (categoryMonitors && categoryMonitors.length > 0) {
-      console.log(`Checking ${categoryMonitors.length} category monitors...`);
+      console.log(`Checking ${categoryMonitors.length} category monitors in PARALLEL...`);
       
-      for (const cat of categoryMonitors as CategoryMonitor[]) {
-        console.log(`Checking category: ${cat.name} (${cat.url})`);
+      // Process categories in parallel for speed
+      const categoryPromises = (categoryMonitors as CategoryMonitor[]).map(async (cat, index) => {
+        // Use different API keys for each category (round-robin)
+        const keyIndex = index % apiKeys.length;
+        const startKeyIndex = keyIndex;
         
-        // Try each API key for this category
         let catResult: { success: boolean; itemCount?: number; error?: string } = { success: false, error: 'No keys' };
+        let currentKeyIndex = startKeyIndex;
         
-        for (const key of apiKeys as ApiKey[]) {
+        do {
+          const key = apiKeys[currentKeyIndex] as ApiKey;
+          console.log(`Category ${cat.name}: trying key ${key.label || key.id.slice(0, 8)}`);
+          
           const result = await scrapeItemCount(cat.url, key.api_key);
           
-          await supabase
+          // Update key status in background (don't await)
+          supabase
             .from('firecrawl_api_keys')
             .update({ 
               last_used_at: new Date().toISOString(), 
               last_error: result.success ? null : (result.error || null)
             })
-            .eq('id', key.id);
+            .eq('id', key.id)
+            .then(() => {});
           
           if (result.success) {
             catResult = result;
@@ -306,30 +315,39 @@ serve(async (req) => {
           }
           
           if (result.isApiKeyError) {
+            currentKeyIndex = (currentKeyIndex + 1) % apiKeys.length;
+            if (currentKeyIndex === startKeyIndex) break; // Tried all keys
             continue;
           }
           
           catResult = result;
           break;
-        }
+        } while (currentKeyIndex !== startKeyIndex);
         
+        return { cat, catResult };
+      });
+      
+      // Wait for all categories to complete
+      const categoryResults = await Promise.all(categoryPromises);
+      
+      // Process results
+      for (const { cat, catResult } of categoryResults) {
         if (catResult.success && catResult.itemCount !== undefined) {
           console.log(`Category ${cat.name}: ${catResult.itemCount} items (threshold: ${cat.threshold})`);
           
-          // Update last_item_count
-          await supabase
+          // Update last_item_count in background
+          supabase
             .from('category_monitors')
             .update({ last_item_count: catResult.itemCount })
-            .eq('id', cat.id);
+            .eq('id', cat.id)
+            .then(() => {});
           
-          // If marked for subtraction, add to total subtraction
           if (cat.subtract_from_total) {
             totalSubtraction += catResult.itemCount;
             subtractedCategories.push({ name: cat.name, count: catResult.itemCount });
             console.log(`Subtracting ${cat.name}: ${catResult.itemCount} from total`);
           }
           
-          // Check if exceeds threshold (only for non-subtracted categories)
           if (!cat.subtract_from_total && catResult.itemCount >= cat.threshold) {
             categoryAlerts.push({
               name: cat.name,
