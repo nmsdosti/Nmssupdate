@@ -24,7 +24,56 @@ interface ApiKey {
   last_error: string | null;
 }
 
-async function scrapeItemCount(url: string, firecrawlApiKey: string): Promise<{ success: boolean; itemCount?: number; error?: string; isApiKeyError?: boolean }> {
+// Convert category page URL to API URL
+function convertToApiUrl(pageUrl: string): string {
+  const match = pageUrl.match(/\/c\/([a-z0-9-]+)/i) || pageUrl.match(/\/([a-z]+-\d+-\d+)/i);
+  if (match) {
+    const categoryPath = match[1];
+    return `https://www.sheinindia.in/api/category/${categoryPath}?fields=SITE&currentPage=0&pageSize=45&format=json&query=%3Anewest&sort=9&gridColumns=2&includeUnratedProducts=false&advfilter=true&platform=Desktop&displayRatings=true&store=shein`;
+  }
+  if (pageUrl.includes('/api/category/')) return pageUrl;
+  return pageUrl;
+}
+
+// Main URLs
+const MAIN_PAGE_URL = 'https://www.sheinindia.in/c/sverse-5939-37961';
+const MAIN_API_URL = "https://www.sheinindia.in/api/category/sverse-5939-37961?fields=SITE&currentPage=0&pageSize=45&format=json&query=%3Anewest&sort=9&gridColumns=2&includeUnratedProducts=false&advfilter=true&platform=Desktop&displayRatings=true&store=shein";
+
+// Try direct API first (fast, no credits used)
+async function fetchFromSheinApiDirect(apiUrl: string): Promise<{ success: boolean; itemCount?: number; error?: string; shouldFallback?: boolean }> {
+  try {
+    const headers = {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+      'Accept': 'application/json, text/plain, */*',
+      'Accept-Language': 'en-US,en;q=0.9',
+      'Referer': 'https://www.sheinindia.in/sheinverse/c/sverse-5939-37961',
+      'Origin': 'https://www.sheinindia.in',
+    };
+
+    const urlWithCacheBuster = `${apiUrl}${apiUrl.includes('?') ? '&' : '?'}_t=${Date.now()}`;
+    const response = await fetch(urlWithCacheBuster, { method: 'GET', headers });
+
+    if (response.status === 403) {
+      console.log('⚠️ Direct API returned 403, will fallback to Firecrawl');
+      return { success: false, error: 'API blocked (403)', shouldFallback: true };
+    }
+
+    if (!response.ok) {
+      return { success: false, error: `HTTP ${response.status}`, shouldFallback: true };
+    }
+
+    const data = await response.json();
+    const totalResults = data.totalResults || 0;
+    console.log(`✅ Direct API success: ${totalResults} items`);
+    return { success: true, itemCount: totalResults };
+  } catch (error) {
+    console.log('⚠️ Direct API error, will fallback:', error);
+    return { success: false, error: error instanceof Error ? error.message : 'Unknown error', shouldFallback: true };
+  }
+}
+
+// Fallback: Use Firecrawl for HTML scraping
+async function scrapeWithFirecrawl(url: string, firecrawlApiKey: string): Promise<{ success: boolean; itemCount?: number; error?: string; isApiKeyError?: boolean }> {
   try {
     const scrapeResponse = await fetch('https://api.firecrawl.dev/v1/scrape', {
       method: 'POST',
@@ -90,27 +139,22 @@ serve(async (req) => {
   try {
     const body = await req.json().catch(() => ({}));
     
-    // Get settings from database
+    // Get settings
     const { data: settings } = await supabase
       .from('monitor_settings')
       .select('threshold, jump_threshold, is_paused, last_api_key_alert_at, interval_seconds')
       .eq('id', 'default')
       .single();
     
-    // Check if monitoring is paused
     if (settings?.is_paused) {
-      console.log('Monitoring is paused. Skipping check.');
-      return new Response(JSON.stringify({ 
-        success: true, 
-        paused: true,
-        message: 'Monitoring is currently paused'
-      }), {
+      console.log('Monitoring is paused.');
+      return new Response(JSON.stringify({ success: true, paused: true, message: 'Monitoring is currently paused' }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
     
-    // Check if enough time has passed since last check (interval logic in seconds)
-    const intervalSeconds = settings?.interval_seconds ?? 30;
+    // Interval check
+    const intervalSeconds = settings?.interval_seconds ?? 5;
     const { data: lastHistory } = await supabase
       .from('monitor_history')
       .select('created_at')
@@ -124,7 +168,7 @@ serve(async (req) => {
       const secondsSinceLastCheck = (now.getTime() - lastCheckTime.getTime()) / 1000;
       
       if (secondsSinceLastCheck < intervalSeconds) {
-        console.log(`Skipping check - only ${secondsSinceLastCheck.toFixed(1)}s since last check (interval: ${intervalSeconds}s)`);
+        console.log(`Skipping - ${secondsSinceLastCheck.toFixed(1)}s since last (interval: ${intervalSeconds}s)`);
         return new Response(JSON.stringify({ 
           success: true, 
           skipped: true,
@@ -135,120 +179,67 @@ serve(async (req) => {
       }
     }
     
-    console.log(`Interval check passed (${intervalSeconds}s). Running monitor...`);
+    console.log(`⚡ Running monitor (${intervalSeconds}s interval) - Hybrid Mode`);
     
     const threshold = typeof body.threshold === 'number' ? body.threshold : (settings?.threshold ?? 1000);
     const jumpThreshold = settings?.jump_threshold ?? 100;
-    const lastApiKeyAlertAt = settings?.last_api_key_alert_at ? new Date(settings.last_api_key_alert_at) : null;
-    console.log('Loaded threshold from database:', threshold);
-    console.log('Jump threshold:', jumpThreshold);
+    console.log('Threshold:', threshold, '| Jump:', jumpThreshold);
     
-    // Get all active API keys ordered by created_at
-    const { data: apiKeys } = await supabase
-      .from('firecrawl_api_keys')
-      .select('id, api_key, label, is_active, last_error')
-      .eq('is_active', true)
-      .order('created_at', { ascending: true });
+    // === STEP 1: Try direct API first (free & fast) ===
+    console.log('📡 Attempting direct SHEIN API...');
+    let mainResult = await fetchFromSheinApiDirect(MAIN_API_URL);
+    let usedMethod = 'direct-api';
     
-    if (!apiKeys || apiKeys.length === 0) {
-      return new Response(JSON.stringify({ 
-        success: false, 
-        error: 'No Firecrawl API keys configured. Please add at least one in Settings.'
-      }), {
-        status: 400,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
-    }
-    
-    console.log(`Found ${apiKeys.length} active API keys`);
-    
-    const targetUrl = 'https://www.sheinindia.in/c/sverse-5939-37961';
-
-    console.log('Scraping with Firecrawl:', targetUrl);
-    console.log('Using threshold:', threshold);
-
-    // Try to scrape main URL with API key rotation
-    let mainResult: { success: boolean; itemCount?: number; error?: string; usedKeyId?: string; allKeysFailed?: boolean } = {
-      success: false,
-      error: 'No API keys available',
-      allKeysFailed: true,
-    };
-    
-    for (const key of apiKeys as ApiKey[]) {
-      console.log(`Trying API key: ${key.label || key.id.slice(0, 8)}...`);
+    // === STEP 2: Fallback to Firecrawl if direct API blocked ===
+    if (!mainResult.success && mainResult.shouldFallback) {
+      console.log('🔄 Falling back to Firecrawl...');
+      usedMethod = 'firecrawl';
       
-      const result = await scrapeItemCount(targetUrl, key.api_key);
-      
-      // Update last_used_at
-      await supabase
+      const { data: apiKeys } = await supabase
         .from('firecrawl_api_keys')
-        .update({ 
-          last_used_at: new Date().toISOString(), 
-          last_error: result.success ? null : (result.error || null)
-        })
-        .eq('id', key.id);
+        .select('id, api_key, label, is_active, last_error')
+        .eq('is_active', true)
+        .order('created_at', { ascending: true });
       
-      if (result.success) {
-        mainResult = { success: true, itemCount: result.itemCount, usedKeyId: key.id, allKeysFailed: false };
+      if (!apiKeys || apiKeys.length === 0) {
+        return new Response(JSON.stringify({ 
+          success: false, 
+          error: 'Direct API blocked and no Firecrawl API keys configured.'
+        }), {
+          status: 400,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+      
+      // Try each Firecrawl key
+      for (const key of apiKeys as ApiKey[]) {
+        console.log(`Trying Firecrawl key: ${key.label || key.id.slice(0, 8)}...`);
+        
+        const result = await scrapeWithFirecrawl(MAIN_PAGE_URL, key.api_key);
+        
+        supabase
+          .from('firecrawl_api_keys')
+          .update({ 
+            last_used_at: new Date().toISOString(), 
+            last_error: result.success ? null : (result.error || null)
+          })
+          .eq('id', key.id)
+          .then(() => {});
+        
+        if (result.success) {
+          mainResult = { success: true, itemCount: result.itemCount };
+          break;
+        }
+        
+        if (result.isApiKeyError) continue;
+        
+        mainResult = { success: false, error: result.error };
         break;
       }
-      
-      // If it's an API key error, mark and try next key
-      if (result.isApiKeyError) {
-        console.log(`API key ${key.label || key.id.slice(0, 8)} failed: ${result.error}`);
-        continue;
-      }
-      
-      // For non-API key errors, return the error
-      mainResult = { success: false, error: result.error, usedKeyId: key.id, allKeysFailed: false };
-      break;
     }
     
     if (!mainResult.success) {
-      console.error('Main scrape failed:', mainResult.error);
-      
-      // If all keys failed, send notification (rate limited to once per hour)
-      if (mainResult.allKeysFailed) {
-        const now = new Date();
-        const oneHourAgo = new Date(now.getTime() - 60 * 60 * 1000);
-        const shouldSendAlert = !lastApiKeyAlertAt || lastApiKeyAlertAt < oneHourAgo;
-        
-        if (shouldSendAlert) {
-          console.log('Sending API key exhausted notification (rate limit: once per hour)');
-          const botToken = Deno.env.get('TELEGRAM_BOT_TOKEN');
-          if (botToken) {
-            const { data: subscribers } = await supabase
-              .from('telegram_subscribers')
-              .select('chat_id, first_name')
-              .eq('is_active', true);
-            
-            if (subscribers && subscribers.length > 0) {
-              const alertMessage = `⚠️ All Firecrawl API Keys Exhausted!\n\nAll ${apiKeys.length} configured API keys have failed or run out of credits.\n\nPlease add new API keys or replenish existing ones in Settings.\n\n(This alert is sent once per hour)`;
-              
-              for (const sub of subscribers) {
-                try {
-                  await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ chat_id: sub.chat_id, text: alertMessage }),
-                  });
-                } catch (e) {
-                  console.error(`Failed to notify ${sub.chat_id}:`, e);
-                }
-              }
-              
-              // Update last alert time
-              await supabase
-                .from('monitor_settings')
-                .update({ last_api_key_alert_at: now.toISOString() })
-                .eq('id', 'default');
-            }
-          }
-        } else {
-          console.log('Skipping API key alert - already sent within the last hour');
-        }
-      }
-      
+      console.error('All methods failed:', mainResult.error);
       return new Response(JSON.stringify({ 
         success: false, 
         error: mainResult.error
@@ -259,9 +250,9 @@ serve(async (req) => {
     }
 
     const rawItemCount = mainResult.itemCount!;
-    console.log('Found main count:', rawItemCount);
+    console.log(`✅ Count: ${rawItemCount} (via ${usedMethod})`);
 
-    // Get last item count from history for jump detection
+    // Get last count for jump detection
     const { data: lastHistoryForJump } = await supabase
       .from('monitor_history')
       .select('item_count')
@@ -271,104 +262,54 @@ serve(async (req) => {
     
     const lastItemCount = lastHistoryForJump?.item_count ?? null;
 
-    // Check category monitors
+    // Check category monitors in parallel
     const { data: categoryMonitors } = await supabase
       .from('category_monitors')
       .select('*')
       .eq('is_active', true);
     
     const categoryAlerts: { name: string; count: number; threshold: number }[] = [];
-    const subtractedCategories: { name: string; count: number }[] = [];
     let totalSubtraction = 0;
     
     if (categoryMonitors && categoryMonitors.length > 0) {
-      console.log(`Checking ${categoryMonitors.length} category monitors in PARALLEL...`);
+      console.log(`📁 Checking ${categoryMonitors.length} categories...`);
       
-      // Process categories in parallel for speed
-      const categoryPromises = (categoryMonitors as CategoryMonitor[]).map(async (cat, index) => {
-        // Use different API keys for each category (round-robin)
-        const keyIndex = index % apiKeys.length;
-        const startKeyIndex = keyIndex;
+      const categoryPromises = (categoryMonitors as CategoryMonitor[]).map(async (cat) => {
+        // Try direct API first for categories too
+        const apiUrl = convertToApiUrl(cat.url);
+        let result = await fetchFromSheinApiDirect(apiUrl);
         
-        let catResult: { success: boolean; itemCount?: number; error?: string } = { success: false, error: 'No keys' };
-        let currentKeyIndex = startKeyIndex;
-        
-        do {
-          const key = apiKeys[currentKeyIndex] as ApiKey;
-          console.log(`Category ${cat.name}: trying key ${key.label || key.id.slice(0, 8)}`);
-          
-          const result = await scrapeItemCount(cat.url, key.api_key);
-          
-          // Update key status in background (don't await)
-          supabase
-            .from('firecrawl_api_keys')
-            .update({ 
-              last_used_at: new Date().toISOString(), 
-              last_error: result.success ? null : (result.error || null)
-            })
-            .eq('id', key.id)
-            .then(() => {});
-          
-          if (result.success) {
-            catResult = result;
-            break;
-          }
-          
-          if (result.isApiKeyError) {
-            currentKeyIndex = (currentKeyIndex + 1) % apiKeys.length;
-            if (currentKeyIndex === startKeyIndex) break; // Tried all keys
-            continue;
-          }
-          
-          catResult = result;
-          break;
-        } while (currentKeyIndex !== startKeyIndex);
-        
-        return { cat, catResult };
+        // If blocked, this category will be skipped (or you could add Firecrawl fallback here)
+        return { cat, result };
       });
       
-      // Wait for all categories to complete
       const categoryResults = await Promise.all(categoryPromises);
       
-      // Process results
-      for (const { cat, catResult } of categoryResults) {
-        if (catResult.success && catResult.itemCount !== undefined) {
-          console.log(`Category ${cat.name}: ${catResult.itemCount} items (threshold: ${cat.threshold})`);
+      for (const { cat, result } of categoryResults) {
+        if (result.success && result.itemCount !== undefined) {
+          console.log(`✅ ${cat.name}: ${result.itemCount} items`);
           
-          // Update last_item_count in background
-          supabase
-            .from('category_monitors')
-            .update({ last_item_count: catResult.itemCount })
-            .eq('id', cat.id)
-            .then(() => {});
+          supabase.from('category_monitors').update({ last_item_count: result.itemCount }).eq('id', cat.id).then(() => {});
           
           if (cat.subtract_from_total) {
-            totalSubtraction += catResult.itemCount;
-            subtractedCategories.push({ name: cat.name, count: catResult.itemCount });
-            console.log(`Subtracting ${cat.name}: ${catResult.itemCount} from total`);
+            totalSubtraction += result.itemCount;
           }
           
-          if (!cat.subtract_from_total && catResult.itemCount >= cat.threshold) {
-            categoryAlerts.push({
-              name: cat.name,
-              count: catResult.itemCount,
-              threshold: cat.threshold,
-            });
+          if (!cat.subtract_from_total && result.itemCount >= cat.threshold) {
+            categoryAlerts.push({ name: cat.name, count: result.itemCount, threshold: cat.threshold });
           }
         } else {
-          console.log(`Failed to scrape category ${cat.name}:`, catResult.error);
+          console.log(`⚠️ ${cat.name}: fetch failed`);
         }
       }
     }
     
-    // Calculate adjusted item count
     const itemCount = Math.max(0, rawItemCount - totalSubtraction);
-    console.log(`Raw count: ${rawItemCount}, Subtraction: ${totalSubtraction}, Adjusted count: ${itemCount}`);
+    console.log(`📊 Raw: ${rawItemCount} | Sub: ${totalSubtraction} | Final: ${itemCount}`);
     
     const jumpDetected = lastItemCount !== null && (itemCount - lastItemCount) >= jumpThreshold;
-    console.log('Last item count:', lastItemCount, 'Current:', itemCount, 'Jump detected:', jumpDetected);
 
-    // Determine if we should send notifications
+    // Notifications
     let telegramSent = false;
     let telegramError: string | null = null;
     const exceedsThreshold = itemCount > threshold;
@@ -377,115 +318,78 @@ serve(async (req) => {
 
     if (shouldNotify) {
       const botToken = Deno.env.get('TELEGRAM_BOT_TOKEN');
-
-      console.log('Sending Telegram notifications...');
+      console.log('🔔 Sending notifications...');
 
       if (botToken) {
-        const { data: subscribers, error: subError } = await supabase
+        const { data: subscribers } = await supabase
           .from('telegram_subscribers')
           .select('chat_id, first_name')
           .eq('is_active', true);
 
-        if (subError) {
-          console.error('Error fetching subscribers:', subError);
-          telegramError = 'Failed to fetch subscribers';
-        } else if (!subscribers || subscribers.length === 0) {
-          console.log('No active subscribers found');
-          telegramError = 'No active subscribers';
-        } else {
-          console.log(`Sending to ${subscribers.length} subscribers`);
-          
-          // Build message
+        if (subscribers && subscribers.length > 0) {
           let messageParts: string[] = ['🚨 SHEIN Monitor Alert!\n'];
           
-          // Main threshold alerts
           if (exceedsThreshold || jumpDetected) {
             if (totalSubtraction > 0) {
-              messageParts.push(`📦 Adjusted Stock: ${itemCount.toLocaleString()} items`);
-              messageParts.push(`(Raw: ${rawItemCount.toLocaleString()} - ${totalSubtraction.toLocaleString()} excluded)`);
+              messageParts.push(`📦 Adjusted: ${itemCount.toLocaleString()} items`);
+              messageParts.push(`(Raw: ${rawItemCount.toLocaleString()} - ${totalSubtraction.toLocaleString()})`);
             } else {
-              messageParts.push(`📦 Total Stock: ${itemCount.toLocaleString()} items`);
+              messageParts.push(`📦 Stock: ${itemCount.toLocaleString()} items`);
             }
             messageParts.push(`Threshold: ${threshold.toLocaleString()}`);
-            if (lastItemCount !== null) {
-              messageParts.push(`Previous: ${lastItemCount.toLocaleString()}`);
-            }
+            if (lastItemCount !== null) messageParts.push(`Previous: ${lastItemCount.toLocaleString()}`);
             
             if (exceedsThreshold && jumpDetected) {
-              messageParts.push(`\n⚠️ Exceeded threshold AND jumped by +${(itemCount - lastItemCount!).toLocaleString()}!`);
+              messageParts.push(`\n⚠️ Exceeded + jumped by +${(itemCount - lastItemCount!).toLocaleString()}!`);
             } else if (exceedsThreshold) {
-              messageParts.push(`\n⚠️ Item count exceeded threshold!`);
+              messageParts.push(`\n⚠️ Exceeded threshold!`);
             } else if (jumpDetected) {
-              messageParts.push(`\n⚠️ Sudden jump: +${(itemCount - lastItemCount!).toLocaleString()} items!`);
+              messageParts.push(`\n⚠️ Jump: +${(itemCount - lastItemCount!).toLocaleString()} items!`);
             }
           }
           
-          // Category alerts
           if (hasCategoryAlerts) {
-            messageParts.push('\n\n📁 Category Alerts:');
+            messageParts.push('\n\n📁 Categories:');
             for (const alert of categoryAlerts) {
-              messageParts.push(`• ${alert.name}: ${alert.count} items (limit: ${alert.threshold})`);
+              messageParts.push(`• ${alert.name}: ${alert.count} (limit: ${alert.threshold})`);
             }
           }
           
-          messageParts.push(`\n\n🔗 ${targetUrl}`);
+          messageParts.push(`\n\n🔗 ${MAIN_PAGE_URL}`);
+          messageParts.push(`\n⚡ Mode: ${usedMethod}`);
           
           const message = messageParts.join('\n');
-
           let successCount = 0;
-          const errors: string[] = [];
 
           for (const sub of subscribers) {
             try {
-              const telegramResponse = await fetch(
-                `https://api.telegram.org/bot${botToken}/sendMessage`,
-                {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({
-                    chat_id: sub.chat_id,
-                    text: message,
-                  }),
-                }
-              );
-
-              const telegramResult = await telegramResponse.json();
-              if (telegramResult.ok) {
-                successCount++;
-                console.log(`Sent to ${sub.chat_id} (${sub.first_name || 'unknown'})`);
-              } else {
-                errors.push(`${sub.chat_id}: ${telegramResult.description}`);
-              }
-            } catch (e: unknown) {
-              errors.push(`${sub.chat_id}: ${e instanceof Error ? e.message : 'Unknown error'}`);
+              const resp = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ chat_id: sub.chat_id, text: message }),
+              });
+              if ((await resp.json()).ok) successCount++;
+            } catch (e) {
+              console.error(`Failed to notify ${sub.chat_id}:`, e);
             }
           }
 
           telegramSent = successCount > 0;
-          if (errors.length > 0) {
-            telegramError = `Sent to ${successCount}/${subscribers.length}. Errors: ${errors.join('; ')}`;
-          }
-          console.log(`Notifications sent: ${successCount}/${subscribers.length}`);
+          console.log(`📤 Sent: ${successCount}/${subscribers.length}`);
         }
       } else {
         telegramError = 'Telegram bot token not configured';
       }
     }
 
-    // Log to history table
-    const { error: historyError } = await supabase
-      .from('monitor_history')
-      .insert({
-        item_count: itemCount,
-        threshold: threshold,
-        exceeds_threshold: exceedsThreshold || hasCategoryAlerts,
-        telegram_sent: telegramSent,
-        telegram_error: telegramError,
-      });
-
-    if (historyError) {
-      console.error('Failed to log history:', historyError);
-    }
+    // Log history
+    await supabase.from('monitor_history').insert({
+      item_count: itemCount,
+      threshold: threshold,
+      exceeds_threshold: exceedsThreshold || hasCategoryAlerts,
+      telegram_sent: telegramSent,
+      telegram_error: telegramError,
+    });
 
     return new Response(JSON.stringify({
       success: true,
@@ -494,14 +398,14 @@ serve(async (req) => {
       exceedsThreshold,
       categoryAlerts,
       telegramSent,
-      telegramError,
+      mode: usedMethod,
       timestamp: new Date().toISOString(),
     }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
 
   } catch (error: unknown) {
-    console.error('Error in monitor-shein function:', error);
+    console.error('Monitor error:', error);
     return new Response(JSON.stringify({ 
       success: false, 
       error: error instanceof Error ? error.message : 'Unknown error'
