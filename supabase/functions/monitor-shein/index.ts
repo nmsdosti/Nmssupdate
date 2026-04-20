@@ -217,7 +217,7 @@ serve(async (req) => {
     // Fetch all in parallel
     const results = await Promise.all(
       (links as MonitoredLink[]).map(async (link) => {
-        const r = await fetchItemCount(link.url);
+        const r = await fetchItemCount(link.url, supabase);
         return { link, ...r };
       })
     );
