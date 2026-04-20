@@ -29,8 +29,12 @@ CONFIG = {
     "CHAT_IDS": ["-1002977953919"],  # Your Telegram chat/group IDs
     
     # Main Category to Monitor
-    "MAIN_URL": "https://www.sheinindia.in/api/category/sverse-5939-37961?fields=SITE&currentPage=0&pageSize=45&format=json&query=%3Anewest&sort=9&gridColumns=2&includeUnratedProducts=false&advfilter=true&platform=Desktop&displayRatings=true&store=shein",
-    "MAIN_PAGE_URL": "https://www.sheinindia.in/c/sverse-5939-37961",
+    # Add ALL the page URLs you want to monitor in MONITOR_URLS below.
+    # The script will auto-build the API endpoint from each page URL.
+    # Supports both /c/<code> and /s/<code> style links.
+    "MONITOR_URLS": [
+        "https://www.sheinindia.in/s/footwear-206291",
+    ],
     
     # Thresholds
     "ITEM_THRESHOLD": 1000,  # Alert if item count exceeds this
