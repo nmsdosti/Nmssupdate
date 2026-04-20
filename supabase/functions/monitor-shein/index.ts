@@ -32,7 +32,7 @@ function convertToApiUrl(pageUrl: string): string {
   return pageUrl;
 }
 
-async function fetchItemCount(pageUrl: string): Promise<{ success: boolean; itemCount?: number; error?: string }> {
+async function directFetch(pageUrl: string): Promise<{ success: boolean; itemCount?: number; error?: string; status?: number }> {
   const apiUrl = convertToApiUrl(pageUrl);
   const cacheBusted = `${apiUrl}${apiUrl.includes('?') ? '&' : '?'}_t=${Date.now()}`;
 
@@ -49,7 +49,7 @@ async function fetchItemCount(pageUrl: string): Promise<{ success: boolean; item
     });
 
     if (!response.ok) {
-      return { success: false, error: `HTTP ${response.status}` };
+      return { success: false, error: `HTTP ${response.status}`, status: response.status };
     }
 
     const data = await response.json();
@@ -58,6 +58,95 @@ async function fetchItemCount(pageUrl: string): Promise<{ success: boolean; item
   } catch (error) {
     return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
   }
+}
+
+// Firecrawl fallback — scrapes the page and extracts the totalResults / item count.
+async function firecrawlFetch(
+  pageUrl: string,
+  supabase: ReturnType<typeof createClient>,
+): Promise<{ success: boolean; itemCount?: number; error?: string }> {
+  // Load active keys, least-recently-used first, errored keys last
+  const { data: keys } = await supabase
+    .from('firecrawl_api_keys')
+    .select('id, api_key, last_error, last_used_at')
+    .eq('is_active', true)
+    .order('last_used_at', { ascending: true, nullsFirst: true });
+
+  if (!keys || keys.length === 0) {
+    return { success: false, error: 'No Firecrawl API keys configured' };
+  }
+
+  // Sort: keys without errors first, errored keys (likely out of credits) last
+  const sorted = [...keys].sort((a: any, b: any) => {
+    const aErr = a.last_error ? 1 : 0;
+    const bErr = b.last_error ? 1 : 0;
+    return aErr - bErr;
+  });
+
+  const apiUrl = convertToApiUrl(pageUrl);
+  let lastError = 'All Firecrawl keys failed';
+
+  for (const key of sorted as any[]) {
+    try {
+      const resp = await fetch('https://api.firecrawl.dev/v2/scrape', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${key.api_key}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          url: apiUrl,
+          formats: ['rawHtml'],
+          onlyMainContent: false,
+        }),
+      });
+
+      const data = await resp.json().catch(() => ({}));
+
+      if (!resp.ok || data?.success === false) {
+        const errMsg = data?.error || `HTTP ${resp.status}`;
+        await supabase
+          .from('firecrawl_api_keys')
+          .update({ last_error: errMsg, last_used_at: new Date().toISOString() })
+          .eq('id', key.id);
+        lastError = errMsg;
+        console.log(`🔑 Firecrawl key failed (${key.id}): ${errMsg}`);
+        continue;
+      }
+
+      const raw: string = data?.rawHtml || data?.data?.rawHtml || data?.markdown || data?.data?.markdown || '';
+      const m = raw.match(/"totalResults"\s*:\s*(\d+)/);
+      const itemCount = m ? parseInt(m[1], 10) : 0;
+
+      await supabase
+        .from('firecrawl_api_keys')
+        .update({ last_error: null, last_used_at: new Date().toISOString() })
+        .eq('id', key.id);
+
+      console.log(`🔥 Firecrawl success via key ${key.id}: ${itemCount} items`);
+      return { success: true, itemCount };
+    } catch (e) {
+      lastError = e instanceof Error ? e.message : 'Unknown error';
+      console.log(`🔑 Firecrawl key error (${key.id}): ${lastError}`);
+    }
+  }
+
+  return { success: false, error: lastError };
+}
+
+async function fetchItemCount(
+  pageUrl: string,
+  supabase: ReturnType<typeof createClient>,
+): Promise<{ success: boolean; itemCount?: number; error?: string; via?: string }> {
+  const direct = await directFetch(pageUrl);
+  if (direct.success) return { ...direct, via: 'direct' };
+
+  // Fall back to Firecrawl on 403/blocked or any non-OK response
+  console.log(`⚠️ Direct fetch failed (${direct.error}) — falling back to Firecrawl`);
+  const fc = await firecrawlFetch(pageUrl, supabase);
+  if (fc.success) return { ...fc, via: 'firecrawl' };
+
+  return { success: false, error: `direct: ${direct.error} | firecrawl: ${fc.error}` };
 }
 
 serve(async (req) => {
@@ -128,7 +217,7 @@ serve(async (req) => {
     // Fetch all in parallel
     const results = await Promise.all(
       (links as MonitoredLink[]).map(async (link) => {
-        const r = await fetchItemCount(link.url);
+        const r = await fetchItemCount(link.url, supabase);
         return { link, ...r };
       })
     );
